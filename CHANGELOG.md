@@ -2,6 +2,13 @@
 When upgrading to a new version, make sure to follow the directions under the "Upgrading" header of the corresponding version.
 If there is no "Upgrading" header for that version, no post-upgrade actions need to be performed.
 
+
+## Upcoming
+### Improvements
+- More improvements to handling 403/429 errors, especially in Docker
+([#372](https://github.com/jdholtz/auto-southwest-check-in/pull/372) by [@dmytrokoren](https://github.com/dmytrokoren))
+
+
 ## 9.0 (2025-09-06)
 ### New Features
 - You will now be notified for any flight that is eligible to be changed for free

@@ -11,7 +11,7 @@ reservation-specific configurations).
 ## Table of Contents
 - [Check Fares](#check-fares)
 - [Notifications](#notifications)
-    * [Test The Notifications](#test-the-notifications)
+    * [Test the Notifications](#test-the-notifications)
 - [Browser Path](#browser-path)
 - [Retrieval Interval](#retrieval-interval)
 - [Accounts and Reservations](#accounts-and-reservations)
@@ -83,7 +83,7 @@ Type: Boolean
 Display flight times in notifications in 24-hour format instead of 12-hour format. Console messages
 will always display in 12-hour format.
 
-### Test The Notifications
+### Test the Notifications
 To test if the notification URLs work, you can run the following command
 ```shell
 $ python3 southwest.py --test-notifications

@@ -14,10 +14,10 @@ Please submit all changes to the `develop` branch. This allows for separation be
     * [Class Method Organization](#class-method-organization)
 
 ## Testing
-This project uses [pytest] to unit test the application. When adding/modifying the code, you may need to add a new test or modify an existing test.
+This project uses [pytest] to test the application. When adding/modifying the code, you may need to add a new test or modify an existing test.
 
 The goal of these tests is to provide 100% code coverage to increase the reliability of existing features and smoothly integrate new ones into the project.
-To learn about running unit tests for **Auto-Southwest Check-In**, visit the [Testing README](tests/README.md).
+To learn about running tests for **Auto-Southwest Check-In**, visit the [Testing README](tests/README.md).
 
 ## Coding Conventions
 Try to stay consistent with the current layout/format of the project. Please use your best judgement when following the conventions in this guide.

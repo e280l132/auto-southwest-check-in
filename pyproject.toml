@@ -48,7 +48,7 @@ ignore = [
     # Disable disallowing the Any type
     "ANN401", # any-type
 
-    # Some Pytest functions catch broad exceptions on purpose
+    # Some pytest functions catch broad exceptions on purpose
     "PT011", # pytest-raises-too-broad
 ]
 
