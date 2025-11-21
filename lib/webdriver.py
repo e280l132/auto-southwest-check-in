@@ -20,9 +20,13 @@ if TYPE_CHECKING:
     from .reservation_monitor import AccountMonitor
 
 BASE_URL = "https://mobile.southwest.com"
-CHECKIN_URL = BASE_URL + "/air/check-in"
-LOGIN_URL = BASE_URL + "/api/security/v4/security/token"
-TRIPS_URL = BASE_URL + "/api/mobile-misc/v1/mobile-misc/page/upcoming-trips"
+# The webView=true parameter is necessary so we don't get redirected to www.southwest.com
+LOGIN_URL = BASE_URL + "/login?webView=true"
+SUCCESSFUL_LOGIN_URL = BASE_URL + "/api/security/v4/security/token"
+TRIPS_URL = (
+    BASE_URL
+    + "/api/loyalty-management/v2/loyalty-management/accounts/self/future-air-reservations-secure"
+)
 HEADERS_URL = BASE_URL + "/api/mobile-air-booking/v1/mobile-air-booking/feature/shopping-details"
 
 # Southwest's code when logging in with the incorrect information
@@ -154,8 +158,8 @@ class WebDriver:
 
         driver.add_cdp_listener("Network.requestWillBeSent", self._headers_listener)
 
-        logger.debug("Loading Southwest check-in page (this may take a moment)")
-        driver.get(CHECKIN_URL)
+        logger.debug("Loading Southwest login page (this may take a moment)")
+        driver.get(LOGIN_URL)
         self._take_debug_screenshot(driver, "after_page_load.png")
 
         return driver
