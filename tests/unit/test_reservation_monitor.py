@@ -105,7 +105,7 @@ class TestReservationMonitor:
         assert not should_exit
         mock_refresh_headers.assert_called_once()
         mock_schedule_reservations.assert_called_once_with(
-            [{"confirmationNumber": self.monitor.config.confirmation_number}]
+            [{"record_locator": self.monitor.config.confirmation_number}]
         )
         mock_check_flight_fares.assert_called_once()
 
@@ -144,7 +144,7 @@ class TestReservationMonitor:
         self, mocker: MockerFixture
     ) -> None:
         mock_process_reservations = mocker.patch.object(CheckInScheduler, "process_reservations")
-        reservations = [{"confirmationNumber": "Test1"}, {"confirmationNumber": "Test2"}]
+        reservations = [{"record_locator": "Test1"}, {"record_locator": "Test2"}]
 
         self.monitor._schedule_reservations(reservations)
 

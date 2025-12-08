@@ -19,15 +19,22 @@ if TYPE_CHECKING:
     from .checkin_scheduler import CheckInScheduler
     from .reservation_monitor import AccountMonitor
 
-BASE_URL = "https://mobile.southwest.com"
-# The webView=true parameter is necessary so we don't get redirected to www.southwest.com
-LOGIN_URL = BASE_URL + "/login?webView=true"
+# URLs for the normal website
+BASE_URL = "https://www.southwest.com"
+ACCOUNT_URL = BASE_URL + "/loyalty/myaccount"
 SUCCESSFUL_LOGIN_URL = BASE_URL + "/api/security/v4/security/token"
 TRIPS_URL = (
     BASE_URL
     + "/api/loyalty-management/v2/loyalty-management/accounts/self/future-air-reservations-secure"
 )
-HEADERS_URL = BASE_URL + "/api/mobile-air-booking/v1/mobile-air-booking/feature/shopping-details"
+
+# URLs for the mobile website
+MOBILE_BASE_URL = "https://mobile.southwest.com"
+# The webView=true parameter is necessary so we don't get redirected to www.southwest.com
+MOBILE_LOGIN_URL = MOBILE_BASE_URL + "/login?webView=true"
+MOBILE_HEADERS_URL = (
+    MOBILE_BASE_URL + "/api/mobile-air-booking/v1/mobile-air-booking/feature/shopping-details"
+)
 
 # Southwest's code when logging in with the incorrect information
 INVALID_CREDENTIALS_CODE = 400518024
@@ -103,24 +110,24 @@ class WebDriver:
         Logs into the account being monitored to retrieve a list of reservations. Since
         valid headers are produced, they are also grabbed and updated in the check-in scheduler.
         Last, if the account name is not set, it will be set based on the response information.
+
+        Headers are retrieved from the mobile Southwest site as the rest of the script uses
+        the mobile API. Then, logging in and retrieving reservations is done through the normal
+        Southwest website, as the mobile site is not navigable with a desktop browser.
         """
         driver = self._get_driver()
         driver.add_cdp_listener("Network.responseReceived", self._login_listener)
 
-        logger.debug("Logging into account to get a list of reservations and valid headers")
+        # Now, load the normal website (not the mobile site) to log in and get reservations
+        logger.debug("Loading Southwest login page (this may take a moment)")
+        driver.get(ACCOUNT_URL)
 
         # Log in to retrieve the account's reservations and needed headers for later requests
-        seleniumbase_actions.wait_for_element_not_visible(driver, ".dimmer")
+        logger.debug("Logging into account to get a list of reservations and valid headers")
         self._take_debug_screenshot(driver, "pre_login.png")
-
-        # If a popup came up with an error, click "OK" to remove it.
-        # See https://github.com/jdholtz/auto-southwest-check-in/issues/226
-        driver.click_if_visible(".button-popup.confirm-button")
-
-        driver.click(".login-button--box")
         time.sleep(random_sleep_duration(1, 3))
-        driver.type('input[name="userNameOrAccountNumber"]', account_monitor.username)
-        driver.type('input[name="password"]', f"{account_monitor.password}\n")
+        driver.type('input[id="username"]', account_monitor.username)
+        driver.type('input[id="password"]', f"{account_monitor.password}\n")
 
         # Wait for the necessary information to be set
         self._wait_for_attribute(driver, "headers_set")
@@ -158,8 +165,9 @@ class WebDriver:
 
         driver.add_cdp_listener("Network.requestWillBeSent", self._headers_listener)
 
-        logger.debug("Loading Southwest login page (this may take a moment)")
-        driver.get(LOGIN_URL)
+        # Load the login page to get valid headers
+        logger.debug("Loading mobile Southwest login page (this may take a moment)")
+        driver.get(MOBILE_LOGIN_URL)
         self._take_debug_screenshot(driver, "after_page_load.png")
 
         return driver
@@ -170,7 +178,7 @@ class WebDriver:
         in the checkin_scheduler.
         """
         request = data["params"]["request"]
-        if request["url"] == HEADERS_URL:
+        if request["url"] == MOBILE_HEADERS_URL:
             self.checkin_scheduler.headers = self._get_needed_headers(request["headers"])
             self.headers_set = True
 
@@ -180,7 +188,7 @@ class WebDriver:
         are kept track of to get the response body associated with them later.
         """
         response = data["params"]["response"]
-        if response["url"] == LOGIN_URL:
+        if response["url"] == SUCCESSFUL_LOGIN_URL:
             logger.debug("Login response has been received")
             self.login_request_id = data["params"]["requestId"]
             self.login_status_code = response["status"]
@@ -228,13 +236,12 @@ class WebDriver:
         In some cases, the submit action on the login form may fail. Therefore, try clicking
         again, if necessary.
         """
-        seleniumbase_actions.wait_for_element_not_visible(driver, ".dimmer")
-        if driver.is_element_visible("div.popup"):
+        if driver.is_element_visible("div[class^='errorMessage']"):
             # Don't attempt to click the login button again if the submission form went through,
-            # yet there was an error
+            # yet there was an error message
             return
 
-        login_button = "button#login-btn"
+        login_button = "button#submit"
         try:
             seleniumbase_actions.wait_for_element_not_visible(driver, login_button, timeout=5)
         except Exception:
@@ -248,8 +255,8 @@ class WebDriver:
         """
         self._wait_for_attribute(driver, "trips_request_id")
         trips_response = self._get_response_body(driver, self.trips_request_id)
-        reservations = trips_response["upcomingTripsPage"]
-        return [reservation for reservation in reservations if reservation["tripType"] == "FLIGHT"]
+        reservations = trips_response["data"]
+        return reservations
 
     def _get_response_body(self, driver: Driver, request_id: str) -> JSON:
         response = driver.execute_cdp_cmd("Network.getResponseBody", {"requestId": request_id})
