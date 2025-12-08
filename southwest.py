@@ -3,7 +3,7 @@
 
 import sys
 
-__version__ = "v9.0"
+__version__ = "v10.0"
 
 __doc__ = """
 Schedule a check-in:

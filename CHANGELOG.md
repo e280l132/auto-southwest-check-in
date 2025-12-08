@@ -3,13 +3,22 @@ When upgrading to a new version, make sure to follow the directions under the "U
 If there is no "Upgrading" header for that version, no post-upgrade actions need to be performed.
 
 
-## Upcoming
+## 10.0 (2025-12-07)
+**Note**: This version is necessary to adapt to Southwest's latest website changes. Updating will
+allow the script to function correctly.
+
+### New Features
+- The script will now use your preferred name after logging in if it is set in your Southwest account
+
 ### Improvements
 - More improvements to handling 403/429 errors, especially in Docker
 ([#372](https://github.com/jdholtz/auto-southwest-check-in/pull/372) by [@dmytrokoren](https://github.com/dmytrokoren))
 
-### New Features
-- The script will now use your preferred name after logging in if it is set in your Southwest account
+### Bug Fixes
+- Fix an incompatibility with the newest version of Southwest's website that caused the script to
+fail to log in, retrieve reservations, and check in to flights
+([#378](https://github.com/jdholtz/auto-southwest-check-in/issues/378) and
+ [#380](https://github.com/jdholtz/auto-southwest-check-in/issues/380))
 
 
 ## 9.0 (2025-09-06)
