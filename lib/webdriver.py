@@ -286,7 +286,10 @@ class WebDriver:
             return
 
         logger.debug("First time logging in. Setting account name")
-        account_monitor.first_name = response["customers.userInformation.firstName"]
+        account_monitor.first_name = (
+            response.get("customers.userInformation.preferredName")
+            or response["customers.userInformation.firstName"]
+        )
         account_monitor.last_name = response["customers.userInformation.lastName"]
 
         print(

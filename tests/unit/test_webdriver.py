@@ -295,6 +295,22 @@ class TestWebDriver:
         assert mock_account_monitor.first_name == "John"
         assert mock_account_monitor.last_name == "Doe"
 
+    def test_set_account_name_sets_the_preferred_first_name_when_available(
+        self, mock_account_monitor: mock.Mock
+    ) -> None:
+        mock_account_monitor.first_name = None
+        self.driver._set_account_name(
+            mock_account_monitor,
+            {
+                "customers.userInformation.firstName": "John",
+                "customers.userInformation.lastName": "Doe",
+                "customers.userInformation.preferredName": "Johnny",
+            },
+        )
+
+        assert mock_account_monitor.first_name == "Johnny"
+        assert mock_account_monitor.last_name == "Doe"
+
     def test_quit_driver_cleans_up_webdriver(
         self, mocker: MockerFixture, mock_chrome: mock.Mock
     ) -> None:

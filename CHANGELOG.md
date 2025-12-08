@@ -8,6 +8,9 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
 - More improvements to handling 403/429 errors, especially in Docker
 ([#372](https://github.com/jdholtz/auto-southwest-check-in/pull/372) by [@dmytrokoren](https://github.com/dmytrokoren))
 
+### New Features
+- The script will now use your preferred name after logging in if it is set in your Southwest account
+
 
 ## 9.0 (2025-09-06)
 ### New Features
