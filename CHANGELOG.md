@@ -10,6 +10,7 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
     - The Docker image also now uses Python 3.14
 
 ### Upgrading
+- Upgrade the dependencies to the latest versions by running `pip install -r requirements.txt`
 - The script is no longer officially supported for Python 3.9. If you are using Python 3.9, it is
 recommended to upgrade to a newer version
 
