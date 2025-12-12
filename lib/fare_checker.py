@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from .log import get_logger
 from .utils import CheckFaresOption, FlightChangeError, make_request, time
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .flight import Flight
     from .reservation_monitor import ReservationMonitor
 

@@ -23,7 +23,7 @@ information beforehand.
 ## Installation
 
 ### Prerequisites
-- [Python 3.9+]
+- [Python 3.10+]
 - [Pip]
 - [Any Chromium-based browser]
 
@@ -192,7 +192,7 @@ If you are running the script with Docker, the current workaround is to run the 
 </details>
 
 
-[Python 3.9+]: https://www.python.org/downloads/
+[Python 3.10+]: https://www.python.org/downloads/
 [Pip]: https://pip.pypa.io/en/stable/installation/
 [Any Chromium-based browser]: https://en.wikipedia.org/wiki/Chromium_(web_browser)#Browsers_based_on_Chromium
 [Python virtual environment]: https://virtualenv.pypa.io/en/stable/

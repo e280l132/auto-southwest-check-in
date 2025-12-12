@@ -3,6 +3,16 @@ When upgrading to a new version, make sure to follow the directions under the "U
 If there is no "Upgrading" header for that version, no post-upgrade actions need to be performed.
 
 
+## Upcoming
+### New Features
+- Official support for Python 3.14
+    - Support for Python 3.9 has been dropped
+
+### Upgrading
+- The script is no longer officially supported for Python 3.9. If you are using Python 3.9, it is
+recommended to upgrade to a newer version
+
+
 ## 10.0 (2025-12-07)
 **Note**: This version is necessary to adapt to Southwest's latest website changes. Updating will
 allow the script to function correctly.
