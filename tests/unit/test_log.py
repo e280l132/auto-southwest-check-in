@@ -50,17 +50,6 @@ def test_init_logging_sets_verbosity_level_correctly(
     assert logger.handlers[1].level == verbosity_level
 
 
-def test_get_logger_does_not_initialize_logger_with_fork_start_method(
-    mocker: MockerFixture,
-) -> None:
-    mocker.patch("multiprocessing.get_start_method", return_value="fork")
-    mock_init_logging = mocker.patch("lib.log.init_logging")
-
-    multiprocessing.current_process().name = "Process-1"
-    log.get_logger("lib")
-    mock_init_logging.assert_not_called()
-
-
 def test_get_logger_does_not_initialize_logger_in_main_process(mocker: MockerFixture) -> None:
     mock_init_logging = mocker.patch("lib.log.init_logging")
 
@@ -69,8 +58,7 @@ def test_get_logger_does_not_initialize_logger_in_main_process(mocker: MockerFix
     mock_init_logging.assert_not_called()
 
 
-def test_get_logger_initializes_logger_with_spawn_start_method(mocker: MockerFixture) -> None:
-    mocker.patch("multiprocessing.get_start_method", return_value="spawn")
+def test_get_logger_initializes_logger_with_child_process(mocker: MockerFixture) -> None:
     mock_init_logging = mocker.patch("lib.log.init_logging")
 
     multiprocessing.current_process().name = "Process-1"

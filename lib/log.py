@@ -67,13 +67,8 @@ def get_logger(name: str) -> logging.Logger:
     """
     logger = logging.getLogger(name)
 
-    # When processes are started using the spawn method, their logger
-    # configuration will not get copied over (unlike the fork start method).
-    # Therefore, the configuration has to be reapplied for every child process.
-    if (
-        multiprocessing.get_start_method() == "spawn"
-        and multiprocessing.current_process().name != "MainProcess"
-    ):
+    # Reinitialize the logging for all child processes
+    if multiprocessing.current_process().name != "MainProcess":
         init_logging(logger)
 
     return logger
