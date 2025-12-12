@@ -7,6 +7,7 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
 ### New Features
 - Official support for Python 3.14
     - Support for Python 3.9 has been dropped
+    - The Docker image also now uses Python 3.14
 
 ### Upgrading
 - The script is no longer officially supported for Python 3.9. If you are using Python 3.9, it is

@@ -9,6 +9,7 @@ __pycache__
 .pre-commit-config.yaml
 .pytest_cache
 .ruff_cache
+.venv
 *.md
 
 config.example.json
