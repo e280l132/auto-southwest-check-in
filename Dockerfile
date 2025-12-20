@@ -6,7 +6,7 @@ WORKDIR /app
 # this Docker image already downloads a compatible chromedriver
 ENV AUTO_SOUTHWEST_CHECK_IN_DOCKER=1
 
-RUN apk add --update --no-cache chromium chromium-chromedriver xvfb xauth uv
+RUN apk add --update --no-cache chromium chromium-chromedriver tini xvfb xauth uv
 
 RUN adduser -D auto-southwest-check-in -h /app
 RUN chown -R auto-southwest-check-in:auto-southwest-check-in /app
@@ -20,4 +20,5 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 COPY . .
 
-ENTRYPOINT ["python3", "-u", "southwest.py"]
+# Use tini so Selenium zombie processes exit cleanly
+ENTRYPOINT ["tini", "--", "python3", "-u", "southwest.py"]

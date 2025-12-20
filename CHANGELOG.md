@@ -11,6 +11,7 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
 
 ### Bug Fixes
 - Clean up leftover temporary browser files ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
+- Clean up zombie chromium processes in Docker ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
 
 ### Upgrading
 - Upgrade the dependencies to the latest versions by running `pip install -r requirements.txt`
