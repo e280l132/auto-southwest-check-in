@@ -354,8 +354,9 @@ class TestWebDriver:
         self, mocker: MockerFixture, mock_chrome: mock.Mock
     ) -> None:
         temp_browser_dir = Path("/tmp/.org.chromium.Chromium.AAAAAA")
-        mocker.patch.object(Path, "readlink", return_value=temp_browser_dir / "SingletonSocket")
-        assert WebDriver._get_temp_browser_dir(mock_chrome) == temp_browser_dir
+        socket_file = temp_browser_dir / "SingletonSocket"
+        mocker.patch.object(Path, "readlink", return_value=socket_file)
+        assert WebDriver._get_temp_browser_dir(mock_chrome) == socket_file.absolute().parent
 
     def test_stop_display_stops_virtual_display(self, mocker: MockerFixture) -> None:
         mock_display = mocker.patch("lib.webdriver.Display")
