@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -337,6 +338,25 @@ class TestWebDriver:
         mocker.patch("lib.webdriver.Display", side_effect=Exception)
         self.driver._start_display()
 
+    def test_get_temp_browser_dir_returns_none_when_link_not_found(
+        self, mock_chrome: mock.Mock
+    ) -> None:
+        mock_chrome.user_data_dir = "/does/not/exist"
+        assert WebDriver._get_temp_browser_dir(mock_chrome) is None
+
+    def test_get_temp_browser_dir_returns_none_when_not_chromium_dir(
+        self, mocker: MockerFixture, mock_chrome: mock.Mock
+    ) -> None:
+        mocker.patch.object(Path, "readlink", return_value=Path("/tmp/not_chrome"))
+        assert WebDriver._get_temp_browser_dir(mock_chrome) is None
+
+    def test_get_temp_browser_dir_returns_chromium_dir(
+        self, mocker: MockerFixture, mock_chrome: mock.Mock
+    ) -> None:
+        temp_browser_dir = Path("/tmp/.org.chromium.Chromium.AAAAAA")
+        mocker.patch.object(Path, "readlink", return_value=temp_browser_dir / "SingletonSocket")
+        assert WebDriver._get_temp_browser_dir(mock_chrome) == temp_browser_dir
+
     def test_stop_display_stops_virtual_display(self, mocker: MockerFixture) -> None:
         mock_display = mocker.patch("lib.webdriver.Display")
         self.driver.display = mock_display
@@ -350,3 +370,26 @@ class TestWebDriver:
 
         self.driver._stop_display()
         mock_display.stop.assert_not_called()
+
+    def test_cleanup_browser_dir_removes_browser_dir(self, mocker: MockerFixture) -> None:
+        mocker.patch.object(Path, "exists", return_value=True)
+        mock_rmtree = mocker.patch("shutil.rmtree")
+
+        temp_browser_dir = Path("/tmp/.org.chromium.Chromium.AAAAAA")
+        WebDriver._cleanup_browser_dir(temp_browser_dir)
+        mock_rmtree.assert_called_once_with(temp_browser_dir)
+
+    def test_cleanup_browser_dir_does_not_remove_when_none(self, mocker: MockerFixture) -> None:
+        mock_rmtree = mocker.patch("shutil.rmtree")
+        WebDriver._cleanup_browser_dir(None)
+        mock_rmtree.assert_not_called()
+
+    def test_cleanup_browser_dir_does_not_remove_when_doesnt_exist(
+        self, mocker: MockerFixture
+    ) -> None:
+        mocker.patch.object(Path, "exists", return_value=False)
+        mock_rmtree = mocker.patch("shutil.rmtree")
+
+        temp_browser_dir = Path("/tmp/.org.chromium.Chromium.AAAAAA")
+        WebDriver._cleanup_browser_dir(temp_browser_dir)
+        mock_rmtree.assert_not_called()

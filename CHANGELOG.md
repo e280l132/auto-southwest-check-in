@@ -9,6 +9,9 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
     - Support for Python 3.9 has been dropped
     - The Docker image also now uses Python 3.14
 
+### Bug Fixes
+- Clean up leftover temporary browser files ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
+
 ### Upgrading
 - Upgrade the dependencies to the latest versions by running `pip install -r requirements.txt`
 - The script is no longer officially supported for Python 3.9. If you are using Python 3.9, it is

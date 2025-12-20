@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -298,8 +299,10 @@ class WebDriver:
         )  # Don't log as it contains sensitive information
 
     def _quit_driver(self, driver: Driver) -> None:
+        temp_browser_dir = self._get_temp_browser_dir(driver)
         driver.quit()
         self._stop_display()
+        self._cleanup_browser_dir(temp_browser_dir)
 
     def _start_display(self) -> None:
         try:
@@ -313,7 +316,46 @@ class WebDriver:
         except Exception as e:
             logger.debug("Failed to start display: %s", e)
 
+    @staticmethod
+    def _get_temp_browser_dir(driver: Driver) -> Path | None:
+        """
+        Get the temporary browser directory. This is different than the driver's user data directory
+        and isn't automatically cleaned up when the driver quits. This directory isn't directly
+        accessible via the driver object, so it is retrieved from a symlink in the user data
+        directory.
+
+        To make sure the correct directory is removed, it needs to start with
+        '.org.chromium.Chromium.'. Removing this won't cause issues when a custom user data
+        directory is set as Chromium always initializes a new temporary browser directory on start.
+        """
+        # The SingletonSocket file is symlinked from the user data directory to the temporary
+        # browser directory, so we can get that directory by reading the source of the symlink
+        socket_path = Path(driver.user_data_dir) / "SingletonSocket"
+        try:
+            socket_path = socket_path.readlink().absolute()
+        except FileNotFoundError:
+            return None
+
+        temp_chromium_dir = socket_path.parent
+        # A safety measure. Only declare it as a valid temporary browser directory if is the
+        # Chromium browser directory.
+        if not temp_chromium_dir.name.startswith(".org.chromium.Chromium."):
+            return None
+
+        return temp_chromium_dir
+
     def _stop_display(self) -> None:
         if self.display is not None:
             self.display.stop()
             logger.debug("Stopped virtual display successfully")
+
+    @staticmethod
+    def _cleanup_browser_dir(temp_browser_dir: Path | None) -> None:
+        """
+        Cleanup the temporary browser directory used by the current driver instance.
+        This is done to prevent accumulation of temporary browser directories over time.
+        """
+
+        if temp_browser_dir is not None and temp_browser_dir.exists():
+            logger.debug("Removing temporary browser directory: %s", temp_browser_dir)
+            shutil.rmtree(temp_browser_dir)
