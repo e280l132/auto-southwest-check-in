@@ -4,7 +4,7 @@ skip = "venv,./utils/airport_timezones.json"
 
 [tool.coverage.run]
 branch = true
-omit = ["**/venv/*"]
+omit = ["**/venv/*", "/opt/homebrew/Cellar/*"]
 
 [tool.coverage.report]
 show_missing = true
