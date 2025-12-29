@@ -9,11 +9,13 @@ on:
       - "**.py"
       - "**/requirements.txt"
       - ".github/workflows/tests.yml"
+      - "pyproject.toml"
   pull_request:
     paths:
       - "**.py"
       - "**/requirements.txt"
       - ".github/workflows/tests.yml"
+      - "pyproject.toml"
 
 jobs:
   tests:
