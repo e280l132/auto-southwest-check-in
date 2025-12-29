@@ -208,10 +208,10 @@ class TestReservationMonitor:
 
         mock_sleep.assert_called_once_with(0)
 
-    def test_get_account_name_returns_correct_name(self) -> None:
+    def test_get_display_name_returns_correct_name(self) -> None:
         self.monitor.first_name = "John"
         self.monitor.last_name = "Doe"
-        assert self.monitor.get_account_name() == "John Doe"
+        assert self.monitor.get_display_name() == "John Doe"
 
     def test_stop_checkins_stops_all_checkins(self, mocker: MockerFixture) -> None:
         mock_checkin_handler = mocker.patch.object(CheckInHandler, "stop_check_in")
@@ -312,13 +312,19 @@ class TestAccountMonitor:
         assert new_reservations == reservations
         assert not skip_scheduling
 
-    def test_get_account_name_returns_name_when_set(self) -> None:
+    def test_get_display_name_returns_name_when_set(self) -> None:
         self.monitor.first_name = "John"
         self.monitor.last_name = "Doe"
-        assert self.monitor.get_account_name() == "John Doe"
+        assert self.monitor.get_display_name() == "John Doe"
 
-    def test_get_account_name_returns_username_when_name_not_set(self) -> None:
-        assert self.monitor.get_account_name() == self.monitor.username
+    def test_get_display_name_returns_username_when_name_not_set(self) -> None:
+        assert self.monitor.get_display_name() == self.monitor.username
+
+    def test_get_display_name_returns_preferred_name_when_set(self) -> None:
+        self.monitor.first_name = "John"
+        self.monitor.preferred_name = "Johnny"
+        self.monitor.last_name = "Doe"
+        assert self.monitor.get_display_name() == "Johnny Doe"
 
     def test_stop_monitoring_stops_checkins(self, mocker: MockerFixture) -> None:
         mock_stop_checkins = mocker.patch.object(AccountMonitor, "_stop_checkins")

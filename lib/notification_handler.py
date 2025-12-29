@@ -219,4 +219,4 @@ class NotificationHandler:
             requests.post(self.reservation_monitor.config.healthchecks_url + "/fail", data=data)
 
     def _get_account_name(self) -> str:
-        return self.reservation_monitor.get_account_name()
+        return self.reservation_monitor.get_display_name()

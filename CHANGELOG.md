@@ -10,6 +10,10 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
     - The Docker image also now uses Python 3.14
 
 ### Bug Fixes
+- Always use first name (instead of preferred name) for scheduling flights and check-ins
+([#385](https://github.com/jdholtz/auto-southwest-check-in/issues/385))
+    - The script will still use the preferred name for notifications, but will use the first name of
+    the account for interactions with Southwest
 - Clean up leftover temporary browser files ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
 - Clean up zombie chromium processes in Docker ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
 

@@ -161,7 +161,7 @@ class ReservationMonitor:
         logger.debug("Sleeping for %d seconds", sleep_time)
         time.sleep(sleep_time)
 
-    def get_account_name(self) -> str:
+    def get_display_name(self) -> str:
         return f"{self.first_name} {self.last_name}"
 
     def _stop_checkins(self) -> None:
@@ -191,6 +191,7 @@ class AccountMonitor(ReservationMonitor):
         super().__init__(config, lock)
         self.username = config.username
         self.password = config.password
+        self.preferred_name = ""
 
     def _check(self) -> bool:
         """
@@ -264,12 +265,15 @@ class AccountMonitor(ReservationMonitor):
 
         return [], True
 
-    def get_account_name(self) -> str:
+    def get_display_name(self) -> str:
         if not self.first_name:
             # No name has been set, so use the account's username.
             return self.username
 
-        return super().get_account_name()
+        if self.preferred_name:
+            return f"{self.preferred_name} {self.last_name}"
+
+        return super().get_display_name()
 
     def _stop_monitoring(self) -> None:
         print(f"\nStopping monitoring for account with username {self.username}")

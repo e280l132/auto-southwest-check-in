@@ -229,5 +229,5 @@ class TestNotificationHandler:
         assert mock_post.call_count == expected_calls
 
     def test_get_account_name_returns_the_reservation_monitor_name(self) -> None:
-        self.handler.reservation_monitor.get_account_name.return_value = "John Doe"
+        self.handler.reservation_monitor.get_display_name.return_value = "John Doe"
         assert self.handler._get_account_name() == "John Doe"

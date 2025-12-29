@@ -287,15 +287,12 @@ class WebDriver:
             return
 
         logger.debug("First time logging in. Setting account name")
-        account_monitor.first_name = (
-            response.get("customers.userInformation.preferredName")
-            or response["customers.userInformation.firstName"]
-        )
+        account_monitor.first_name = response["customers.userInformation.firstName"]
+        account_monitor.preferred_name = response.get("customers.userInformation.preferredName", "")
         account_monitor.last_name = response["customers.userInformation.lastName"]
 
         print(
-            f"Successfully logged in to {account_monitor.first_name} "
-            f"{account_monitor.last_name}'s account\n"
+            f"Successfully logged in to {account_monitor.get_display_name()}'s account\n"
         )  # Don't log as it contains sensitive information
 
     def _quit_driver(self, driver: Driver) -> None:
