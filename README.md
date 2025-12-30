@@ -197,7 +197,7 @@ If you are running the script with Docker, the current workaround is to run the 
 [Any Chromium-based browser]: https://en.wikipedia.org/wiki/Chromium_(web_browser)#Browsers_based_on_Chromium
 [Python virtual environment]: https://virtualenv.pypa.io/en/stable/
 [Docker]: https://www.docker.com/
-[Docker repository]: https://hub.docker.com/repository/docker/jdholtz/auto-southwest-check-in
+[Docker repository]: https://hub.docker.com/r/jdholtz/auto-southwest-check-in
 [GitHub Issues]: https://github.com/jdholtz/auto-southwest-check-in/issues/new/choose
 [GitHub Discussion]: https://github.com/jdholtz/auto-southwest-check-in/discussions/new/choose
 [Pull Request]: https://github.com/jdholtz/auto-southwest-check-in/pulls
