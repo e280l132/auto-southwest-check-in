@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from sbvirtualdisplay import Display
 from seleniumbase import Driver
+from seleniumbase import config as sb_config
 from seleniumbase.fixtures import page_actions as seleniumbase_actions
 
 from .config import IS_DOCKER
@@ -45,6 +46,10 @@ WAIT_TIMEOUT_SECS = 180
 JSON = dict[str, Any]
 
 logger = get_logger(__name__)
+
+# Prevent SeleniumBase from missing requests when reinstantiating the driver for multiple accounts.
+# See https://github.com/jdholtz/auto-southwest-check-in/issues/387 for details.
+sb_config.skip_133_patch = True
 
 
 class WebDriver:
