@@ -91,7 +91,7 @@ class FareChecker:
 
         # Ensure the flight does not have a companion pass connected to it
         # as companion passes are not supported.
-        self._check_for_companion(reservation_info)
+        #self._check_for_companion(reservation_info) # COMMENTED THIS OUT BECAUSE IT PREVENTS CHECKING FARES FOR ANY RESERVATION WITH A COMPANION PASS, EVEN IF THE COMPANION PASS IS NOT CONNECTED TO THE FLIGHT BEING CHECKED
 
         # Next, get the search information needed to change the flight
         logger.debug("Retrieving search information for the current flight")
