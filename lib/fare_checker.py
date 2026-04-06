@@ -42,6 +42,12 @@ class FareChecker:
         if flight_price["amount"] < -1:
             # Lower fare!
             self.reservation_monitor.notification_handler.lower_fare(flight, price_info)
+        else:
+            logger.info(
+                "Fare check for flight %s: %s (no lower fare found)",
+                flight.confirmation_number,
+                price_info,
+            )
 
     def _get_flight_price(self, flight: Flight) -> JSON:
         """Get the price difference of the flight"""
