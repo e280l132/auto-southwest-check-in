@@ -158,20 +158,20 @@ class FareChecker:
 
         query = {
             "departureDate": departure_date,
-            "origin-airport": flight.departure_airport_code,
-            "destination-airport": flight.destination_airport_code,
-            "fare-type": "POINTS",
-            "number-adults": 1,
-            "number-seniors": 0,
-            "trip-type": "OW",
-            "carrier-of-choice": "WN",
-            "promo-code": "",
+            "originationAirportCode": flight.departure_airport_code,
+            "destinationAirportCode": flight.destination_airport_code,
+            "adultPassengersCount": "1",
+            "seniorPassengersCount": "0",
+            "fareType": "POINTS",
+            "promoCode": "",
+            "tripType": "OW",
+            "currencyType": "PTS",
         }
 
         logger.debug("Searching for companion flight prices")
         time.sleep(2)
 
-        response = make_request("GET", COMPANION_SHOPPING_URL, self.headers, query, max_attempts=7)
+        response = make_request("POST", COMPANION_SHOPPING_URL, self.headers, query, max_attempts=7)
         cards = self._extract_companion_flight_cards(response, flight)
         return self._get_lowest_absolute_fare(cards, fare_type)
 
