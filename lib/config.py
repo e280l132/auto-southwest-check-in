@@ -365,6 +365,7 @@ class ReservationConfig(Config):
         self.confirmation_number = None
         self.first_name = None
         self.last_name = None
+        self.companion_fare_points = None
 
     def _parse_config(self, config: JSON) -> None:
         super()._parse_config(config)
@@ -380,6 +381,13 @@ class ReservationConfig(Config):
         self.confirmation_number = config["confirmationNumber"]
         self.first_name = config["firstName"]
         self.last_name = config["lastName"]
+
+        if "companionFarePoints" in config:
+            companion_fare_points = config["companionFarePoints"]
+            if not isinstance(companion_fare_points, int):
+                raise ConfigError("'companionFarePoints' must be an integer")
+            self.companion_fare_points = companion_fare_points
+            logger.debug("Setting companion fare points to %d", companion_fare_points)
 
 
 class NotificationConfig(Config):
