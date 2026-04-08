@@ -10,6 +10,7 @@ from lib.utils import DriverTimeoutError, LoginError
 from lib.webdriver import (
     INVALID_CREDENTIALS_CODE,
     MOBILE_HEADERS_URL,
+    SEARCH_RESPONSE_URL,
     SUCCESSFUL_LOGIN_URL,
     TRIPS_URL,
     WebDriver,
@@ -396,3 +397,56 @@ class TestWebDriver:
         temp_browser_dir = Path("/tmp/.org.chromium.Chromium.AAAAAA")
         WebDriver._cleanup_browser_dir(temp_browser_dir)
         mock_rmtree.assert_not_called()
+
+    # --- _search_listener ---
+
+    def test_search_listener_ignores_non_sw_url(self) -> None:
+        data = {"params": {"response": {"url": "https://example.com/api/shopping"}, "requestId": "id1"}}
+        self.driver._search_listener(data)
+        assert self.driver.search_request_id is None
+
+    def test_search_listener_ignores_sw_url_without_shopping(self) -> None:
+        url = SEARCH_RESPONSE_URL + "v1/something/details"
+        data = {"params": {"response": {"url": url}, "requestId": "id1"}}
+        self.driver._search_listener(data)
+        assert self.driver.search_request_id is None
+
+    def test_search_listener_captures_air_booking_shopping_url(self) -> None:
+        url = SEARCH_RESPONSE_URL + "v1/air-booking/page/air/booking/shopping"
+        data = {"params": {"response": {"url": url}, "requestId": "test_id"}}
+        self.driver._search_listener(data)
+        assert self.driver.search_request_id == "test_id"
+
+    def test_search_listener_does_not_overwrite_already_captured_id(self) -> None:
+        url = SEARCH_RESPONSE_URL + "v1/air-booking/shopping/other"
+        self.driver.search_request_id = "first_id"
+        data = {"params": {"response": {"url": url}, "requestId": "second_id"}}
+        self.driver._search_listener(data)
+        assert self.driver.search_request_id == "first_id"
+
+    # --- get_public_flight_prices ---
+
+    def test_get_public_flight_prices_returns_valid_response(
+        self, mocker: MockerFixture, mock_chrome: mock.Mock
+    ) -> None:
+        mocker.patch.object(self.driver, "_get_driver", return_value=mock_chrome)
+        mocker.patch.object(self.driver, "_wait_for_attribute")
+        valid_response = {"data": {"searchResults": {"airProducts": [{"details": []}]}}}
+        mocker.patch.object(self.driver, "_get_response_body", return_value=valid_response)
+        mocker.patch.object(self.driver, "_quit_driver")
+
+        result = self.driver.get_public_flight_prices("LAX", "MIA", "2025-12-01")
+
+        assert result == valid_response
+        mock_chrome.add_cdp_listener.assert_called_once()
+
+    def test_get_public_flight_prices_raises_on_missing_pricing_data(
+        self, mocker: MockerFixture, mock_chrome: mock.Mock
+    ) -> None:
+        mocker.patch.object(self.driver, "_get_driver", return_value=mock_chrome)
+        mocker.patch.object(self.driver, "_wait_for_attribute")
+        mocker.patch.object(self.driver, "_get_response_body", return_value={"wrong": "structure"})
+        mocker.patch.object(self.driver, "_quit_driver")
+
+        with pytest.raises(DriverTimeoutError):
+            self.driver.get_public_flight_prices("LAX", "MIA", "2025-12-01")

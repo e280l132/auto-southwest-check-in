@@ -4,12 +4,13 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .log import get_logger
-from .utils import CheckFaresOption, FlightChangeError, RequestError, make_request, time
+from .utils import CheckFaresOption, DriverTimeoutError, FlightChangeError, RequestError, make_request, time
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .flight import Flight
+    from .ignore_manager import IgnoreManager
     from .reservation_monitor import ReservationMonitor
     from .webdriver import WebDriver
 
@@ -36,6 +37,10 @@ class FareChecker:
         direct change-page fetch is attempted using the known URL pattern.
         """
         logger.debug("Checking current price for flight")
+
+        if self.reservation_monitor.config.check_fares == CheckFaresOption.SAME_DAY_SMART:
+            self._check_all_alternate_fares(flight)
+            return
 
         try:
             flight_price = self._get_flight_price(flight)
@@ -74,6 +79,109 @@ class FareChecker:
     def _is_reaccommodated(self, flight: Flight) -> bool:
         """Return True if the flight is reaccommodated (can be changed for free)."""
         return flight.reservation_info["_links"].get("reaccom") is not None
+
+    def _is_nonstop(self, flight: Flight) -> bool:
+        """Return True if the current flight is nonstop (no zero-width slash in flight number)."""
+        return "\u200b/\u200b" not in flight.flight_number
+
+    def _get_all_cheaper_flights(self, flight: Flight) -> list[JSON]:
+        """
+        Return all cheaper flight alternatives on the same day using the change-shopping API.
+
+        Applies a smart filter based on the current flight's stop type:
+          - Nonstop current flight → only nonstop alternatives are considered
+          - Connecting current flight → any alternative (nonstop or connecting) is considered
+
+        Each returned dict contains:
+          flightNumbers, displayNumber, departureTime, stopDescription, savings (amount/currencyCode)
+        Sorted by savings amount ascending (biggest savings first).
+        """
+        flights, fare_type = self._get_matching_flights(flight)
+
+        # Smart filter: match nonstop preference to the current flight's stop type
+        if self._is_nonstop(flight):
+            passes_filter = lambda f: f.get("stopDescription") == "Nonstop"  # noqa: E731
+        else:
+            passes_filter = lambda f: True  # noqa: E731
+
+        cheaper = []
+        for card in flights:
+            if not passes_filter(card):
+                continue
+            fare = self._get_matching_fare(card["fares"], fare_type)
+            if fare is None or fare["amount"] >= -1:
+                # No fare available or false-positive -1 USD difference
+                continue
+            cheaper.append(
+                {
+                    "flightNumbers": card.get("flightNumbers", ""),
+                    "displayNumber": card.get("flightNumbers", "").replace("\u200b", ""),
+                    "departureTime": card.get("departureTime", ""),
+                    "stopDescription": card.get("stopDescription", ""),
+                    "savings": fare,
+                }
+            )
+
+        cheaper.sort(key=lambda x: x["savings"]["amount"])
+        return cheaper
+
+    def _check_all_alternate_fares(self, flight: Flight) -> None:
+        """
+        same_day_smart entry point: find ALL cheaper same-day alternatives, filter out ignored
+        flights, and send a single digest notification if any visible alternatives remain.
+        """
+        from .ignore_manager import IgnoreManager  # local import avoids circular dependency
+
+        flight_date = flight._local_departure_time.strftime("%Y-%m-%d")
+        conf = flight.confirmation_number
+        ignore_manager = IgnoreManager()
+
+        if ignore_manager.is_day_ignored(conf, flight_date):
+            logger.info(
+                "All alternate fares for flight %s on %s are ignored — skipping", conf, flight_date
+            )
+            return
+
+        try:
+            alternatives = self._get_all_cheaper_flights(flight)
+        except FlightChangeError as err:
+            if self._is_companion_flight(flight) and not self._is_reaccommodated(flight):
+                companion_fare_points = getattr(
+                    self.reservation_monitor.config, "companion_fare_points", None
+                )
+                self._check_companion_fare_via_webdriver(flight, companion_fare_points)
+            else:
+                logger.info(
+                    "Skipping alternate fare check for flight %s: %s", conf, err
+                )
+            return
+        except Exception as err:
+            logger.error("Error checking alternate fares for flight %s: %s", conf, err)
+            return
+
+        visible = [
+            a for a in alternatives
+            if not ignore_manager.is_ignored(conf, flight_date, a["flightNumbers"])
+        ]
+
+        if not visible:
+            logger.info(
+                "Alternate fare check for flight %s on %s: no new cheaper alternatives "
+                "(none found or all ignored)",
+                conf,
+                flight_date,
+            )
+            return
+
+        port = self.reservation_monitor.config.ignore_server_port
+        base_url = (
+            self.reservation_monitor.config.ignore_server_base_url
+            or f"http://localhost:{port}"
+        )
+        token = self.reservation_monitor.config.ignore_server_token
+        self.reservation_monitor.notification_handler.alternate_fares(
+            flight, visible, flight_date, base_url, token
+        )
 
     def _bound_matches_flight(self, bound: JSON, flight: Flight) -> bool:
         """Return True if a reservation bound's flight number matches the given flight."""
@@ -121,17 +229,37 @@ class FareChecker:
             departure_date,
         )
 
-        try:
-            webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
-            response = webdriver.get_public_flight_prices(origin, destination, departure_date)
-        except Exception as err:
-            logger.error(
-                "Companion webdriver fare check failed for %s: %s",
-                flight.confirmation_number,
-                err,
-            )
-            self._log_companion_unavailable(flight, companion_fare_points, reason=str(err))
-            return
+        max_attempts = 2
+        response = None
+        for attempt in range(max_attempts):
+            try:
+                webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
+                response = webdriver.get_public_flight_prices(origin, destination, departure_date)
+                break
+            except DriverTimeoutError:
+                if attempt < max_attempts - 1:
+                    logger.debug(
+                        "Webdriver search timed out for %s, retrying...",
+                        flight.confirmation_number,
+                    )
+                else:
+                    logger.error(
+                        "Companion webdriver fare check timed out for %s after %d attempts.",
+                        flight.confirmation_number,
+                        max_attempts,
+                    )
+                    self._log_companion_unavailable(
+                        flight, companion_fare_points, reason="webdriver timeout"
+                    )
+                    return
+            except Exception as err:
+                logger.error(
+                    "Companion webdriver fare check failed for %s: %s",
+                    flight.confirmation_number,
+                    err,
+                )
+                self._log_companion_unavailable(flight, companion_fare_points, reason=str(err))
+                return
 
         logger.debug(
             "Public search response for %s: %s",
@@ -179,6 +307,20 @@ class FareChecker:
             )
             return
 
+        # same_day_smart: find all cheaper alternate flights, not just the same flight
+        if self.reservation_monitor.config.check_fares == CheckFaresOption.SAME_DAY_SMART:
+            if companion_fare_points is not None:
+                self._check_companion_alternate_fares(
+                    flight, cards, fare_type, companion_fare_points, departure_date
+                )
+            else:
+                logger.info(
+                    "Companion alternate fare check for flight %s: set 'companionFarePoints' "
+                    "in config to enable same_day_smart alternate fare checking.",
+                    flight.confirmation_number,
+                )
+            return
+
         if companion_fare_points is not None:
             difference = lowest_points - companion_fare_points
             price_info = (
@@ -204,11 +346,128 @@ class FareChecker:
                 f"{lowest_points:,}",
             )
 
+    def _check_companion_alternate_fares(
+        self,
+        flight: Flight,
+        cards: list[JSON],
+        fare_type: str,
+        companion_fare_points: int,
+        flight_date: str,
+    ) -> None:
+        """
+        Find all cheaper alternate flights for a companion-pass flight using public search cards.
+        Called from _check_companion_fare_via_webdriver when check_fares == SAME_DAY_SMART.
+
+        Unlike the change-shopping API (which returns priceDifference), the public search returns
+        absolute prices. Savings are computed as card_price - companion_fare_points.
+        """
+        from .ignore_manager import IgnoreManager
+
+        conf = flight.confirmation_number
+        ignore_manager = IgnoreManager()
+
+        if ignore_manager.is_day_ignored(conf, flight_date):
+            logger.info(
+                "All alternate fares for companion flight %s on %s are ignored", conf, flight_date
+            )
+            return
+
+        # Smart nonstop filter: match the current flight's stop preference
+        if self._is_nonstop(flight):
+            def passes_filter(card: JSON) -> bool:
+                return "NONSTOP" in card.get("filterTags", [])
+        else:
+            def passes_filter(card: JSON) -> bool:
+                return True
+
+        # Current flight number parts for exclusion (strip zero-width chars)
+        current_nums = set(flight.flight_number.replace("\u200b", "").split("/"))
+
+        alternatives = []
+        for card in cards:
+            if not passes_filter(card):
+                continue
+
+            # Skip the current flight
+            card_nums = card.get("flightNumbers", [])
+            if any(n in current_nums for n in card_nums):
+                continue
+
+            # Get the absolute points price
+            try:
+                total_fare = card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]
+            except (KeyError, TypeError):
+                continue
+
+            if total_fare.get("currencyCode") != "POINTS":
+                continue
+
+            try:
+                price = int(str(total_fare.get("value", "")).replace(",", ""))
+            except (ValueError, TypeError):
+                continue
+
+            savings_amount = price - companion_fare_points
+            if savings_amount >= -1:
+                continue  # Not genuinely cheaper
+
+            # Build flight number strings
+            flight_numbers_str = "\u200b/\u200b".join(card_nums)
+            display_number = "/".join(card_nums)
+
+            # Extract departure time — public search may use departureTime or departureDateTime
+            dep_time = card.get("departureTime") or card.get("departureDateTime", "")
+            if "T" in dep_time:
+                dep_time = dep_time.split("T")[1][:5]
+
+            stop_desc = card.get("stopDescription", "")
+
+            alternatives.append(
+                {
+                    "flightNumbers": flight_numbers_str,
+                    "displayNumber": display_number,
+                    "departureTime": dep_time,
+                    "stopDescription": stop_desc,
+                    "savings": {"amount": savings_amount, "currencyCode": "PTS"},
+                }
+            )
+
+        alternatives.sort(key=lambda x: x["savings"]["amount"])
+
+        visible = [
+            a
+            for a in alternatives
+            if not ignore_manager.is_ignored(conf, flight_date, a["flightNumbers"])
+        ]
+
+        if not visible:
+            logger.info(
+                "Companion alternate fare check for flight %s on %s: no new cheaper alternatives "
+                "(none found or all ignored)",
+                conf,
+                flight_date,
+            )
+            return
+
+        port = self.reservation_monitor.config.ignore_server_port
+        base_url = (
+            self.reservation_monitor.config.ignore_server_base_url
+            or f"http://localhost:{port}"
+        )
+        token = self.reservation_monitor.config.ignore_server_token
+        self.reservation_monitor.notification_handler.alternate_fares(
+            flight, visible, flight_date, base_url, token
+        )
+
     def _extract_cards_from_search_response(self, response: JSON) -> list[JSON] | None:
         """Extract flight cards from the public search API response."""
         try:
             return response["data"]["searchResults"]["airProducts"][0]["details"]
-        except (KeyError, TypeError, IndexError):
+        except KeyError as err:
+            logger.debug("Public search response missing expected key: %s", err)
+            return None
+        except (TypeError, IndexError) as err:
+            logger.debug("Public search response has unexpected structure: %s", err)
             return None
 
     def _get_lowest_points_from_cards(
@@ -429,7 +688,9 @@ def get_fare_check_filter(check_fares: CheckFaresOption) -> Callable[[Flight, JS
         return same_flight_filter
     if check_fares == CheckFaresOption.SAME_DAY_NONSTOP:
         return nonstop_flight_filter
-    if check_fares == CheckFaresOption.SAME_DAY:
+    if check_fares in (CheckFaresOption.SAME_DAY, CheckFaresOption.SAME_DAY_SMART):
+        # SAME_DAY_SMART uses its own smart-filter logic in _get_all_cheaper_flights;
+        # any_flight_filter here is the fallback for the companion-pass webdriver path.
         return any_flight_filter
 
     raise ValueError(f"check_fares value ({check_fares}) did not match any valid option")

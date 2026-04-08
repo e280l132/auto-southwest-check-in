@@ -208,6 +208,98 @@ class TestNotificationHandler:
         self.handler.lower_fare(mock_flight, "")
         assert mock_send_notification.call_args[0][1] == NotificationLevel.INFO
 
+    def test_alternate_fares_sends_info_notification_with_ignore_links(
+        self, mocker: MockerFixture
+    ) -> None:
+        mock_send_notification = mocker.patch.object(NotificationHandler, "send_notification")
+        mock_flight = mocker.patch("lib.flight.Flight")
+        mock_flight.confirmation_number = "ABCDEF"
+        mock_flight.departure_airport = "Los Angeles"
+        mock_flight.destination_airport = "Miami"
+        mock_flight.flight_number = "100"
+
+        alternatives = [
+            {
+                "flightNumbers": "200",
+                "displayNumber": "200",
+                "departureTime": "08:15",
+                "stopDescription": "Nonstop",
+                "savings": {"amount": -2300, "currencyCode": "PTS"},
+            }
+        ]
+
+        self.handler.alternate_fares(mock_flight, alternatives, "2025-12-01", "http://localhost:8765")
+
+        assert mock_send_notification.call_args[0][1] == NotificationLevel.INFO
+        body = mock_send_notification.call_args[0][0]
+        assert "ABCDEF" in body
+        assert "200" in body
+        assert "8:15 AM" in body
+        assert "-2,300 PTS" in body
+        assert "http://localhost:8765/ignore?" in body
+        assert "http://localhost:8765/ignore-all?" in body
+
+    def test_alternate_fares_includes_token_in_ignore_links_when_configured(
+        self, mocker: MockerFixture
+    ) -> None:
+        mock_send_notification = mocker.patch.object(NotificationHandler, "send_notification")
+        mock_flight = mocker.patch("lib.flight.Flight")
+        mock_flight.confirmation_number = "ABCDEF"
+        mock_flight.departure_airport = "LAX"
+        mock_flight.destination_airport = "MIA"
+        mock_flight.flight_number = "100"
+
+        alternatives = [
+            {
+                "flightNumbers": "200",
+                "displayNumber": "200",
+                "departureTime": "08:15",
+                "stopDescription": "Nonstop",
+                "savings": {"amount": -2300, "currencyCode": "PTS"},
+            }
+        ]
+
+        self.handler.alternate_fares(
+            mock_flight, alternatives, "2025-12-01", "https://sw_checker.trailblaze.top", "mysecret"
+        )
+
+        body = mock_send_notification.call_args[0][0]
+        assert "https://sw_checker.trailblaze.top/ignore?" in body
+        assert "&token=mysecret" in body
+        assert "https://sw_checker.trailblaze.top/ignore-all?" in body
+
+    def test_alternate_fares_includes_all_alternatives(self, mocker: MockerFixture) -> None:
+        mock_send_notification = mocker.patch.object(NotificationHandler, "send_notification")
+        mock_flight = mocker.patch("lib.flight.Flight")
+        mock_flight.confirmation_number = "ABCDEF"
+        mock_flight.departure_airport = "LAX"
+        mock_flight.destination_airport = "MIA"
+        mock_flight.flight_number = "100"
+
+        alternatives = [
+            {
+                "flightNumbers": "200",
+                "displayNumber": "200",
+                "departureTime": "08:15",
+                "stopDescription": "Nonstop",
+                "savings": {"amount": -2300, "currencyCode": "PTS"},
+            },
+            {
+                "flightNumbers": "300",
+                "displayNumber": "300",
+                "departureTime": "12:00",
+                "stopDescription": "Nonstop",
+                "savings": {"amount": -1500, "currencyCode": "PTS"},
+            },
+        ]
+
+        self.handler.alternate_fares(mock_flight, alternatives, "2025-12-01", "http://localhost:8765")
+
+        body = mock_send_notification.call_args[0][0]
+        assert "200" in body
+        assert "300" in body
+        assert body.count("/ignore?") == 2
+
     @pytest.mark.parametrize(("url", "expected_calls"), [("http://healthchecks", 1), (None, 0)])
     def test_healthchecks_success_pings_url_only_if_configured(
         self, mocker: MockerFixture, url: str, expected_calls: int

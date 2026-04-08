@@ -193,6 +193,7 @@ class CheckFaresOption(str, Enum):
     SAME_FLIGHT = "same_flight"
     SAME_DAY_NONSTOP = "same_day_nonstop"
     SAME_DAY = "same_day"
+    SAME_DAY_SMART = "same_day_smart"
 
 
 def is_truthy(arg: bool | int | str) -> bool:

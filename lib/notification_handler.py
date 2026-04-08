@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import apprise
@@ -200,6 +202,54 @@ class NotificationHandler:
         logger.debug("Sending timeout before check-in notification...")
         self.send_notification(error_message, NotificationLevel.ERROR, [flight])
 
+    def alternate_fares(
+        self,
+        flight: Flight,
+        alternatives: list[dict],
+        flight_date: str,
+        ignore_base_url: str,
+        ignore_token: str | None = None,
+    ) -> None:
+        """
+        Send a single digest notification listing all cheaper same-day alternatives with
+        per-flight and per-day ignore links for the embedded ignore server.
+        """
+        conf = flight.confirmation_number
+        base = ignore_base_url
+
+        def _with_token(url: str) -> str:
+            return f"{url}&token={ignore_token}" if ignore_token else url
+
+        lines = [
+            f"Cheaper flights found for {conf} "
+            f"({flight.departure_airport} \u2192 {flight.destination_airport} on {flight_date}) "
+            f"for {self._get_account_name()}!\n",
+            f"Current flight: {flight.flight_number.replace(chr(0x200B), '')} "
+            f"at {FLIGHT_TIME_PLACEHOLDER}\n",
+            "Cheaper options:",
+        ]
+
+        for alt in alternatives:
+            display = alt["displayNumber"]
+            dep = self._format_12hr(alt.get("departureTime", ""))
+            stops = alt.get("stopDescription", "")
+            savings = alt["savings"]
+            amount_str = f"{savings['amount']:+,} {savings['currencyCode']}"
+            ignore_url = _with_token(
+                f"{base}/ignore"
+                f"?conf={conf}&date={flight_date}&flight={alt['flightNumbers']}"
+            )
+            lines.append(f"  {display}  {dep}  {stops}  {amount_str}")
+            lines.append(f"    Ignore this flight: {ignore_url}\n")
+
+        ignore_all_url = _with_token(f"{base}/ignore-all?conf={conf}&date={flight_date}")
+        lines.append(f"Ignore ALL alternates for {flight_date}: {ignore_all_url}\n")
+        lines.append(f"Manage your reservation here: {MANAGE_RESERVATION_URL}\n")
+
+        body = "\n".join(lines)
+        logger.debug("Sending alternate fares notification...")
+        self.send_notification(body, NotificationLevel.INFO, [flight])
+
     def lower_fare(self, flight: Flight, price_info: str) -> None:
         message = (
             f"Found lower fare of {price_info} for flight {flight.confirmation_number} "
@@ -220,3 +270,13 @@ class NotificationHandler:
 
     def _get_account_name(self) -> str:
         return self.reservation_monitor.get_display_name()
+
+    @staticmethod
+    def _format_12hr(time_str: str) -> str:
+        """Convert a 24-hour time string like '20:00' to 12-hour format like '8:00 PM'."""
+        try:
+            dt = datetime.strptime(time_str, "%H:%M")
+            fmt = "%#I:%M %p" if os.name == "nt" else "%-I:%M %p"
+            return dt.strftime(fmt)
+        except (ValueError, TypeError):
+            return time_str

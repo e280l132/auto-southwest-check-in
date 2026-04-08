@@ -11,7 +11,10 @@ import requests
 from lib import log
 
 from .config import IS_DOCKER, GlobalConfig, ReservationConfig
+from .ignore_manager import IgnoreManager
+from .ignore_server import start_ignore_server
 from .reservation_monitor import AccountMonitor, ReservationMonitor
+from .utils import CheckFaresOption
 
 IP_TIMEZONE_URL = "https://ipinfo.io/timezone"
 LOG_FILE = "logs/auto-southwest-check-in.log"
@@ -108,6 +111,14 @@ def set_up_check_in(arguments: list[str]) -> None:
     )
 
     lock = multiprocessing.Lock()
+
+    # Start the ignore server if any config uses same_day_smart fare checking.
+    # The server runs as a daemon thread in the main process so it is accessible
+    # to the user when clicking ignore links in notification emails.
+    all_configs = list(config.accounts) + list(config.reservations)
+    if any(c.check_fares == CheckFaresOption.SAME_DAY_SMART for c in all_configs):
+        start_ignore_server(config.ignore_server_port, IgnoreManager(), config.ignore_server_token)
+
     set_up_accounts(config, lock)
     set_up_reservations(config, lock)
 

@@ -6,6 +6,7 @@
 
 # Program files
 config.json
+ignored_flights.json
 .coverage
 logs/
 Pipfile

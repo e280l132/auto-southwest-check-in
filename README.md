@@ -6,6 +6,12 @@ the script can notify you if the price of your flight drops before departure
 This script can also log in to your Southwest account and automatically schedule check-ins as
 flights are scheduled.
 
+The `same_day_smart` fare mode extends fare checking to find **all** cheaper same-day flight
+alternatives, not just a drop on your current flight. It sends a single digest notification
+listing every cheaper option with one-click ignore links so you can suppress individual flights
+or entire days from future alerts. See [Same-Day Smart Fare Checking](CONFIGURATION.md#same-day-smart-fare-checking)
+for full details.
+
 **Note**: If you are checking into an international flight, make sure to fill out all the passport
 information beforehand.
 
@@ -107,6 +113,26 @@ services:
     volumes:
       - /full-path/to/config.json:/app/config.json
 ```
+
+#### Docker Compose Example with same_day_smart (Ignore Server)
+When using the `same_day_smart` fare mode, the script runs an embedded HTTP server to handle
+ignore-link clicks from notification emails. Expose the port and mount a volume so ignore state
+persists across container restarts:
+```yaml
+services:
+  auto-southwest:
+    image: jdholtz/auto-southwest-check-in
+    container_name: auto-southwest
+    restart: on-failure
+    ports:
+      - "8765:8765"
+    volumes:
+      - /full-path/to/config.json:/app/config.json
+      - /full-path/to/ignored_flights.json:/app/ignored_flights.json
+```
+If the container is behind a reverse proxy or Cloudflare tunnel, set `ignoreServerBaseUrl` in
+`config.json` to the public address so the links in emails point to the right place. Use
+`ignoreServerToken` to protect the endpoint. See [Ignore Server](CONFIGURATION.md#ignore-server) for details.
 
 #### Docker Compose Example Using Environment Variables
 ```yaml

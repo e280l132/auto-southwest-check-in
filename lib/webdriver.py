@@ -52,6 +52,9 @@ MOBILE_HEADERS_URL = (
     MOBILE_BASE_URL + "/api/mobile-air-booking/v1/mobile-air-booking/feature/shopping-details"
 )
 
+# URL prefix for the public air-booking search API — used to identify pricing responses
+SEARCH_RESPONSE_URL = BASE_URL + "/api/air-booking/"
+
 # Southwest's code when logging in with the incorrect information
 INVALID_CREDENTIALS_CODE = 400518024
 
@@ -306,6 +309,15 @@ class WebDriver:
         self._wait_for_attribute(driver, "search_request_id")
         response = self._get_response_body(driver, self.search_request_id)
         self._quit_driver(driver)
+
+        # Validate that the captured response contains flight pricing data
+        try:
+            response["data"]["searchResults"]["airProducts"]
+        except (KeyError, TypeError) as err:
+            raise DriverTimeoutError(
+                f"Public search response missing expected pricing data: {err}"
+            ) from err
+
         return response
 
     def _search_listener(self, data: JSON) -> None:
@@ -319,18 +331,16 @@ class WebDriver:
         url = response["url"]
 
         # Log all SW API responses at debug level to help identify the right endpoint
-        if BASE_URL + "/api/" in url:
+        if SEARCH_RESPONSE_URL in url:
             logger.debug(
                 "Public search API response: %s %s",
                 response.get("status"),
                 url,
             )
 
-        # Capture the first response that looks like flight search results
-        if self.search_request_id is None and BASE_URL + "/api/" in url and (
-            "products" in url or "shopping" in url or "select" in url
-        ):
-            logger.debug("Captured candidate flight search response from: %s", url)
+        # Capture the first air-booking shopping response (specific to the pricing endpoint)
+        if self.search_request_id is None and SEARCH_RESPONSE_URL in url and "shopping" in url:
+            logger.debug("Captured flight search response from: %s", url)
             self.search_request_id = data["params"]["requestId"]
 
     def _get_response_body(self, driver: Driver, request_id: str) -> JSON:

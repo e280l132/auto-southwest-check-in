@@ -31,6 +31,9 @@ class Config:
         self.check_fares = CheckFaresOption.SAME_FLIGHT
         self.notifications = []
         self.retrieval_interval = 24 * 60 * 60
+        self.ignore_server_port = 8765
+        self.ignore_server_base_url = None
+        self.ignore_server_token = None
 
         # Account and reservation-specific configs (parsed in _parse_config, but not merged into
         # the global configuration).
@@ -68,6 +71,9 @@ class Config:
         self.browser_path = global_config.browser_path
         self.check_fares = global_config.check_fares
         self.retrieval_interval = global_config.retrieval_interval
+        self.ignore_server_port = global_config.ignore_server_port
+        self.ignore_server_base_url = global_config.ignore_server_base_url
+        self.ignore_server_token = global_config.ignore_server_token
 
     def merge_notification_config(self, merging_config: Config) -> None:
         """
@@ -125,6 +131,32 @@ class Config:
 
             # Convert hours to seconds
             self.retrieval_interval *= 3600
+
+        if "ignoreServerPort" in config:
+            ignore_server_port = config["ignoreServerPort"]
+
+            if not isinstance(ignore_server_port, int):
+                raise ConfigError("'ignoreServerPort' must be an integer")
+
+            if not (1 <= ignore_server_port <= 65535):
+                raise ConfigError("'ignoreServerPort' must be between 1 and 65535")
+
+            self.ignore_server_port = ignore_server_port
+            logger.debug("Setting ignore server port to %d", ignore_server_port)
+
+        if "ignoreServerBaseUrl" in config:
+            ignore_server_base_url = config["ignoreServerBaseUrl"]
+            if not isinstance(ignore_server_base_url, str):
+                raise ConfigError("'ignoreServerBaseUrl' must be a string")
+            self.ignore_server_base_url = ignore_server_base_url.rstrip("/")
+            logger.debug("Setting ignore server base URL to %s", self.ignore_server_base_url)
+
+        if "ignoreServerToken" in config:
+            ignore_server_token = config["ignoreServerToken"]
+            if not isinstance(ignore_server_token, str) or not ignore_server_token:
+                raise ConfigError("'ignoreServerToken' must be a non-empty string")
+            self.ignore_server_token = ignore_server_token
+            logger.debug("Ignore server token configured")
 
         if "notifications" in config:
             notifications = config["notifications"]
@@ -386,6 +418,8 @@ class ReservationConfig(Config):
             companion_fare_points = config["companionFarePoints"]
             if not isinstance(companion_fare_points, int):
                 raise ConfigError("'companionFarePoints' must be an integer")
+            if companion_fare_points <= 0:
+                raise ConfigError("'companionFarePoints' must be a positive integer")
             self.companion_fare_points = companion_fare_points
             logger.debug("Setting companion fare points to %d", companion_fare_points)
 
