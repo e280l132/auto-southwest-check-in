@@ -29,6 +29,20 @@ TRIPS_URL = (
     BASE_URL
     + "/api/loyalty-management/v2/loyalty-management/accounts/self/future-air-reservations-secure"
 )
+# Public flight search page — fareType=POINTS so we get points pricing
+SEARCH_PAGE_URL = (
+    BASE_URL
+    + "/air/booking/select.html"
+    + "?adultPassengersCount=1"
+    + "&departureDate={date}"
+    + "&destinationAirportCode={destination}"
+    + "&fareType=POINTS"
+    + "&int=HOMEQBOMAIR"
+    + "&originationAirportCode={origin}"
+    + "&passengerType=ADULT"
+    + "&returnAirportCode=&returnDate="
+    + "&tripType=oneway"
+)
 
 # URLs for the mobile website
 MOBILE_BASE_URL = "https://mobile.southwest.com"
@@ -78,6 +92,9 @@ class WebDriver:
         self.login_request_id = None
         self.login_status_code = None
         self.trips_request_id = None
+
+        # For public flight price scraping
+        self.search_request_id = None
 
     def _should_take_screenshots(self) -> bool:
         """
@@ -184,7 +201,13 @@ class WebDriver:
         in the checkin_scheduler.
         """
         request = data["params"]["request"]
-        if request["url"] == MOBILE_HEADERS_URL:
+        url = request["url"]
+
+        # Log all mobile API requests at debug level to help discover endpoint paths
+        if url.startswith(MOBILE_BASE_URL + "/api/"):
+            logger.debug("Mobile API request observed: %s %s", request.get("method", "?"), url)
+
+        if url == MOBILE_HEADERS_URL:
             self.checkin_scheduler.headers = self._get_needed_headers(request["headers"])
             self.headers_set = True
 
@@ -263,6 +286,52 @@ class WebDriver:
         trips_response = self._get_response_body(driver, self.trips_request_id)
         reservations = trips_response["data"]
         return reservations
+
+    def get_public_flight_prices(self, origin: str, destination: str, date: str) -> JSON:
+        """
+        Navigate to the public Southwest flight search page and capture the API response
+        that contains flight pricing. Returns the raw JSON response body.
+
+        This is used as a fallback for companion-pass flights where the change-flow
+        API is blocked — the public search has no knowledge of companion restrictions.
+        """
+        driver = self._get_driver()
+        driver.add_cdp_listener("Network.responseReceived", self._search_listener)
+
+        search_url = SEARCH_PAGE_URL.format(origin=origin, destination=destination, date=date)
+        logger.debug("Loading public flight search page (route: %s→%s on %s)", origin, destination, date)
+        driver.get(search_url)
+        self._take_debug_screenshot(driver, "search_page.png")
+
+        self._wait_for_attribute(driver, "search_request_id")
+        response = self._get_response_body(driver, self.search_request_id)
+        self._quit_driver(driver)
+        return response
+
+    def _search_listener(self, data: JSON) -> None:
+        """
+        Capture the flight search API response from the public Southwest search page.
+        Logs all SW API responses at debug level for discovery, and records the first
+        response that looks like flight search results (contains 'products' or 'flights'
+        in the URL path).
+        """
+        response = data["params"]["response"]
+        url = response["url"]
+
+        # Log all SW API responses at debug level to help identify the right endpoint
+        if BASE_URL + "/api/" in url:
+            logger.debug(
+                "Public search API response: %s %s",
+                response.get("status"),
+                url,
+            )
+
+        # Capture the first response that looks like flight search results
+        if self.search_request_id is None and BASE_URL + "/api/" in url and (
+            "products" in url or "shopping" in url or "select" in url
+        ):
+            logger.debug("Captured candidate flight search response from: %s", url)
+            self.search_request_id = data["params"]["requestId"]
 
     def _get_response_body(self, driver: Driver, request_id: str) -> JSON:
         response = driver.execute_cdp_cmd("Network.getResponseBody", {"requestId": request_id})

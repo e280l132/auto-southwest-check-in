@@ -22,7 +22,7 @@ class Flight:
     def __init__(self, flight_info: JSON, reservation_info: JSON, confirmation_number: str) -> None:
         self.confirmation_number = confirmation_number
         self.departure_airport = flight_info["departureAirport"]["name"]
-        self.departure_airport_code = flight_info["departureAirport"]["code"]
+        self.departure_airport_code = flight_info["departureAirport"].get("code", "")
         self.destination_airport = flight_info["arrivalAirport"]["name"]
         self.destination_airport_code = flight_info["arrivalAirport"].get("code", "")
         self.flight_number = self._get_flight_number(flight_info["flights"])

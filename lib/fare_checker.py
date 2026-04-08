@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from .log import get_logger
@@ -10,16 +11,13 @@ if TYPE_CHECKING:
 
     from .flight import Flight
     from .reservation_monitor import ReservationMonitor
+    from .webdriver import WebDriver
 
 # Type alias for JSON
 JSON = dict[str, Any]
 
 BOOKING_URL = "mobile-air-booking/"
-# Endpoint for searching available flights without a reservation change context.
-# Used for companion-pass flights where change_link is null.
-COMPANION_SHOPPING_URL = (
-    "mobile-air-booking/v1/mobile-air-booking/page/flights/products"
-)
+CHANGE_SHOPPING_URL = "mobile-air-booking/v1/mobile-air-booking/page/flights/change/shopping"
 logger = get_logger(__name__)
 
 
@@ -34,18 +32,19 @@ class FareChecker:
         Check if the price amount is negative (in either points or USD).
         If it is, send a notification to the user about the lower fare.
 
-        For companion-pass flights where the change flow is unavailable, an
-        alternative direct-search path is used if companionFarePoints is configured.
+        For companion-pass flights where the change flow is unavailable, a
+        direct change-page fetch is attempted using the known URL pattern.
         """
         logger.debug("Checking current price for flight")
 
         try:
             flight_price = self._get_flight_price(flight)
         except FlightChangeError as err:
-            # If this is a companion flight and the user has configured a paid fare,
-            # use the alternative companion fare check instead of skipping.
             if self._is_companion_flight(flight) and not self._is_reaccommodated(flight):
-                self._check_companion_flight_price(flight)
+                companion_fare_points = getattr(
+                    self.reservation_monitor.config, "companion_fare_points", None
+                )
+                self._check_companion_fare_via_webdriver(flight, companion_fare_points)
             else:
                 raise err
             return
@@ -76,170 +75,207 @@ class FareChecker:
         """Return True if the flight is reaccommodated (can be changed for free)."""
         return flight.reservation_info["_links"].get("reaccom") is not None
 
-    def _check_companion_flight_price(self, flight: Flight) -> None:
-        """
-        Check fares for a companion-pass flight by searching for current prices
-        directly (without the change flow) and comparing against the configured
-        paid fare.
+    def _bound_matches_flight(self, bound: JSON, flight: Flight) -> bool:
+        """Return True if a reservation bound's flight number matches the given flight."""
+        flights = bound.get("flights", [])
+        flight_number = "\u200b/\u200b".join(f["number"].removeprefix("WN") for f in flights)
+        return flight_number == flight.flight_number
 
-        Requires companionFarePoints to be set in the reservation config.
+    def _check_companion_fare_via_webdriver(
+        self, flight: Flight, companion_fare_points: int | None
+    ) -> None:
         """
-        paid_points = self.reservation_monitor.config.companion_fare_points
-        if paid_points is None:
-            logger.info(
-                "Skipping companion fare check for flight %s: "
-                "add 'companionFarePoints' to this reservation in config.json "
-                "to enable fare checking for companion-pass flights",
+        Last-resort companion fare check using a real browser session to load the public
+        Southwest flight search page. The public search has no knowledge of companion-pass
+        restrictions, so it returns normal points pricing for the route/date.
+
+        The lowest points fare found is compared against companionFarePoints. If no
+        companionFarePoints is configured, the current price is logged for reference.
+        """
+        from .webdriver import WebDriver
+
+        # Find the bound that matches this flight to get route/date info
+        bounds = flight.reservation_info.get("bounds", [])
+        departure_date = None
+        for bound in bounds:
+            if self._bound_matches_flight(bound, flight):
+                departure_date = bound.get("departureDate")
+                break
+
+        if departure_date is None:
+            logger.error(
+                "Companion webdriver fare check failed for %s: could not determine departure date.",
                 flight.confirmation_number,
             )
+            self._log_companion_unavailable(flight, companion_fare_points, reason="could not determine departure date")
             return
 
-        if not flight.destination_airport_code:
-            logger.warning(
-                "Cannot check companion fare for flight %s: "
-                "destination airport code not available from Southwest API. "
-                "This may resolve itself; no action needed.",
-                flight.confirmation_number,
-            )
-            return
+        origin = flight.departure_airport_code
+        destination = flight.destination_airport_code
 
         logger.info(
-            "Checking companion fare for flight %s (%s → %s on %s), paid %d PTS",
+            "Checking companion fare for flight %s via public search (route: %s→%s on %s)",
             flight.confirmation_number,
-            flight.departure_airport_code,
-            flight.destination_airport_code,
-            flight.reservation_info["bounds"][0]["departureDate"],
-            paid_points,
+            origin,
+            destination,
+            departure_date,
         )
 
         try:
-            current_price = self._get_companion_current_price(flight)
-        except RequestError as err:
+            webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
+            response = webdriver.get_public_flight_prices(origin, destination, departure_date)
+        except Exception as err:
             logger.error(
-                "Failed to retrieve companion flight prices for %s: %s",
+                "Companion webdriver fare check failed for %s: %s",
                 flight.confirmation_number,
                 err,
             )
+            self._log_companion_unavailable(flight, companion_fare_points, reason=str(err))
             return
 
-        if current_price is None:
+        logger.debug(
+            "Public search response for %s: %s",
+            flight.confirmation_number,
+            json.dumps(response, indent=2, default=str),
+        )
+
+        # Try to extract flight cards from the response. The structure may differ
+        # from the change-shopping response, so we inspect the response and log
+        # what we find. Once we know the structure, parsing can be tightened.
+        cards = self._extract_cards_from_search_response(response)
+        if cards is None:
             logger.info(
-                "No matching fare found for companion flight %s (flight may be sold out or "
-                "fare type unavailable)",
+                "Public search response received for flight %s but flight cards not found. "
+                "See debug log for response structure.",
+                flight.confirmation_number,
+            )
+            self._log_companion_unavailable(flight, companion_fare_points, reason="unexpected search response structure")
+            return
+
+        # Determine the fare type from the reservation bounds
+        bounds = flight.reservation_info.get("bounds", [])
+        fare_type = None
+        for bound in bounds:
+            if self._bound_matches_flight(bound, flight):
+                fare_type = bound.get("fareProductDetails", {}).get("fareProductId")
+                break
+
+        if fare_type is None:
+            logger.error(
+                "Companion webdriver fare check failed for %s: could not determine fare type.",
                 flight.confirmation_number,
             )
             return
 
-        price_diff = current_price - paid_points
-        if price_diff < -100:
-            price_info = f"{price_diff:+,} PTS (current: {current_price:,} PTS, paid: {paid_points:,} PTS)"
-            self.reservation_monitor.notification_handler.lower_fare(flight, price_info)
+        # The public search returns absolute prices, not priceDifference.
+        # Find the lowest points fare for the matching flight(s) and fare type.
+        lowest_points = self._get_lowest_points_from_cards(cards, fare_type, flight)
+
+        if lowest_points is None:
+            logger.info(
+                "Companion fare check for flight %s: no %s points fare available in public search results.",
+                flight.confirmation_number,
+                fare_type,
+            )
+            return
+
+        if companion_fare_points is not None:
+            difference = lowest_points - companion_fare_points
+            price_info = (
+                f"current: {lowest_points:,} PTS, paid: {companion_fare_points:,} PTS "
+                f"(difference: {difference:+,} PTS)"
+            )
+            if difference < -1:
+                self.reservation_monitor.notification_handler.lower_fare(
+                    flight, f"{difference:+,} PTS"
+                )
+            else:
+                logger.info(
+                    "Companion fare check for flight %s: %s (no lower fare found)",
+                    flight.confirmation_number,
+                    price_info,
+                )
         else:
             logger.info(
-                "Companion fare check for flight %s: current=%d PTS, paid=%d PTS (no lower fare found)",
+                "Companion fare check for flight %s: current %s fare is %s PTS. "
+                "Set 'companionFarePoints' in config to detect lower fares.",
                 flight.confirmation_number,
-                current_price,
-                paid_points,
+                fare_type,
+                f"{lowest_points:,}",
             )
 
-    def _get_companion_current_price(self, flight: Flight) -> int | None:
-        """
-        Search for available flights on the same route/date and return the lowest
-        absolute price in points matching the fare type and filter.
-
-        Returns None if no matching fare is available.
-        """
-        bound = self._get_flight_bound(flight)
-        if bound is None:
+    def _extract_cards_from_search_response(self, response: JSON) -> list[JSON] | None:
+        """Extract flight cards from the public search API response."""
+        try:
+            return response["data"]["searchResults"]["airProducts"][0]["details"]
+        except (KeyError, TypeError, IndexError):
             return None
 
-        fare_type = bound.get("fareProductDetails", {}).get("fareProductId", "")
-        departure_date = bound.get("departureDate", "")
-
-        query = {
-            "departureDate": departure_date,
-            "originationAirportCode": flight.departure_airport_code,
-            "destinationAirportCode": flight.destination_airport_code,
-            "adultPassengersCount": "1",
-            "seniorPassengersCount": "0",
-            "fareType": "POINTS",
-            "promoCode": "",
-            "tripType": "OW",
-            "currencyType": "PTS",
-        }
-
-        logger.debug("Searching for companion flight prices")
-        time.sleep(2)
-
-        response = make_request("POST", COMPANION_SHOPPING_URL, self.headers, query, max_attempts=7)
-        cards = self._extract_companion_flight_cards(response, flight)
-        return self._get_lowest_absolute_fare(cards, fare_type)
-
-    def _get_flight_bound(self, flight: Flight) -> JSON | None:
-        """Find the bound in reservation_info that matches this flight."""
-        for bound in flight.reservation_info.get("bounds", []):
-            bound_flight_number = self._format_bound_flight_number(bound.get("flights", []))
-            if bound_flight_number == flight.flight_number:
-                return bound
-        # Fall back to first bound if only one exists
-        bounds = flight.reservation_info.get("bounds", [])
-        return bounds[0] if len(bounds) == 1 else None
-
-    def _format_bound_flight_number(self, flights: list[JSON]) -> str:
-        """Format flight numbers from a bound the same way Flight._get_flight_number does."""
-        flight_number = ""
-        for f in flights:
-            flight_number += f["number"].removeprefix("WN")
-            flight_number += "\u200b/\u200b"
-        return flight_number.rstrip("/\u200b")
-
-    def _extract_companion_flight_cards(self, response: JSON, flight: Flight) -> list[JSON]:
+    def _get_lowest_points_from_cards(
+        self, cards: list[JSON], fare_type: str, flight: Flight
+    ) -> int | None:
         """
-        Extract flight cards from the companion shopping response.
-        The response structure may differ from changeShopping; try common paths.
-        """
-        # Try the standard changeShopping structure first (in case SW reuses it)
-        change_page = response.get("changeShoppingPage", {})
-        if change_page:
-            flights_data = change_page.get("flights", {})
-            return (
-                flights_data.get("outboundPage", {}).get("cards", [])
-                or flights_data.get("inboundPage", {}).get("cards", [])
-            )
-
-        # Try a direct flight products structure
-        flights_page = response.get("flightsPage", response.get("availableFlightsPage", {}))
-        return flights_page.get("cards", [])
-
-    def _get_lowest_absolute_fare(self, cards: list[JSON], fare_type: str) -> int | None:
-        """
-        Return the lowest absolute price (in points) from flight cards, filtered
-        by the configured check_fares filter and fare type.
-        Uses 'price' instead of 'priceDifference' since these are absolute prices.
+        Find the lowest points price across filtered flight cards from the public search.
+        Public search returns absolute prices (not priceDifference), structured as:
+          card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]["value"]
+        where value is a string like "12500" and currencyCode is "POINTS".
+        Returns None if no matching points fares are found.
         """
         lowest = None
 
         for card in cards:
-            fares = card.get("fares") or []
-            for fare in fares:
-                if fare.get("_meta", {}).get("fareProductId") != fare_type:
-                    continue
+            if not self._public_search_filter(card, flight):
+                continue
 
-                # Try absolute price fields; SW may use 'price' or 'farePrice'
-                price_data = fare.get("price") or fare.get("farePrice")
-                if price_data is None:
-                    continue
+            try:
+                total_fare = card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]
+            except (KeyError, TypeError):
+                continue
 
-                try:
-                    amount_str = price_data.get("totalFare") or price_data.get("amount", "")
-                    amount = int(str(amount_str).replace(",", ""))
-                except (ValueError, TypeError):
-                    continue
+            if total_fare.get("currencyCode") != "POINTS":
+                continue
 
+            try:
+                amount = int(str(total_fare.get("value", "")).replace(",", ""))
                 if lowest is None or amount < lowest:
                     lowest = amount
+            except (ValueError, TypeError):
+                continue
 
         return lowest
+
+    def _public_search_filter(self, card: JSON, flight: Flight) -> bool:
+        """
+        Apply the configured fare filter to a public search result card.
+        Public search uses different field names than the change-shopping response:
+          - flightNumbers is a list (e.g. ["2940"]) not a string
+          - nonstop is indicated by "NONSTOP" in filterTags
+        """
+        if self.filter is same_flight_filter:
+            return flight.flight_number in card.get("flightNumbers", [])
+        if self.filter is nonstop_flight_filter:
+            return "NONSTOP" in card.get("filterTags", [])
+        # any_flight_filter — include everything
+        return True
+
+    def _log_companion_unavailable(self, flight: Flight, companion_fare_points: int | None, reason: str = "") -> None:
+        """Log a clear INFO message when companion fare checking is unavailable."""
+        suffix = f" ({reason})" if reason else ""
+        if companion_fare_points is not None:
+            logger.info(
+                "Companion fare check for flight %s is unavailable%s. "
+                "Paid fare: %s points. Cannot determine if a lower fare exists.",
+                flight.confirmation_number,
+                suffix,
+                f"{companion_fare_points:,}",
+            )
+        else:
+            logger.info(
+                "Companion fare check for flight %s is unavailable%s. "
+                "Set 'companionFarePoints' in the reservation config to enable fare tracking.",
+                flight.confirmation_number,
+                suffix,
+            )
 
     def _get_flight_price(self, flight: Flight) -> JSON:
         """Get the price difference of the flight"""
@@ -262,6 +298,7 @@ class FareChecker:
 
         info = change_flight_page["_links"]["changeShopping"]
         site = BOOKING_URL + info["href"]
+        logger.debug("changeShopping URL: %s", site)
 
         # Southwest will not display the other page if its prices aren't requested. Therefore
         # we need to know what page to get based on what flight we requested (in case two flights
@@ -305,6 +342,8 @@ class FareChecker:
             raise FlightChangeError("Flight cannot be changed online")
 
         site = BOOKING_URL + change_link["href"]
+        logger.debug("changeFlightPage URL: %s", site)
+        logger.debug("changeFlightPage query params: %s", change_link["query"])
         time.sleep(2)
 
         response = make_request("GET", site, self.headers, change_link["query"], max_attempts=7)

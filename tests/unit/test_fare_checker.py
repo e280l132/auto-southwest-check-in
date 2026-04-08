@@ -40,26 +40,26 @@ class TestFareChecker:
         self.checker = FareChecker(ReservationMonitor(ReservationConfig()))
 
     def test_check_flight_price_sends_notification_on_lower_fares(
-        self, mocker: MockerFixture
+        self, mocker: MockerFixture, test_flight: Flight
     ) -> None:
         flight_price = {"amount": -10, "currencyCode": "USD"}
         mocker.patch.object(FareChecker, "_get_flight_price", return_value=flight_price)
         mock_lower_fare_notification = mocker.patch.object(NotificationHandler, "lower_fare")
 
-        self.checker.check_flight_price("test_flight")
+        self.checker.check_flight_price(test_flight)
 
         mock_lower_fare_notification.assert_called_once()
 
     # -1 dollar fares are a false positive and are treated as a higher fare
     @pytest.mark.parametrize("amount", [10, 0, -1])
     def test_check_flight_price_does_not_send_notifications_when_fares_are_higher(
-        self, mocker: MockerFixture, amount: int
+        self, mocker: MockerFixture, amount: int, test_flight: Flight
     ) -> None:
         flight_price = {"amount": amount, "currencyCode": "USD"}
         mocker.patch.object(FareChecker, "_get_flight_price", return_value=flight_price)
         mock_lower_fare_notification = mocker.patch.object(NotificationHandler, "lower_fare")
 
-        self.checker.check_flight_price("test_flight")
+        self.checker.check_flight_price(test_flight)
         mock_lower_fare_notification.assert_not_called()
 
     def test_get_flight_price_gets_flight_price_matching_current_flight(
@@ -141,11 +141,9 @@ class TestFareChecker:
         }
         flight_page = {"changeFlightPage": "test_page"}
         mock_make_request = mocker.patch("lib.fare_checker.make_request", return_value=flight_page)
-        mock_check_for_companion = mocker.patch.object(FareChecker, "_check_for_companion")
 
         change_flight_page, fare_type_bounds = self.checker._get_change_flight_page(res_info)
 
-        mock_check_for_companion.assert_called_once()
         assert change_flight_page == "test_page"
         assert fare_type_bounds == ["bound_one", "bound_two"]
 
