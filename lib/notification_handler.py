@@ -229,18 +229,23 @@ class NotificationHandler:
             "Cheaper options:",
         ]
 
+        current_display = flight.flight_number.replace(chr(0x200B), "")
         for alt in alternatives:
             display = alt["displayNumber"]
             dep = self._format_12hr(alt.get("departureTime", ""))
             stops = alt.get("stopDescription", "")
             savings = alt["savings"]
             amount_str = f"{savings['amount']:+,} {savings['currencyCode']}"
-            ignore_url = _with_token(
-                f"{base}/ignore"
-                f"?conf={conf}&date={flight_date}&flight={alt['flightNumbers']}"
-            )
-            lines.append(f"  {display}  {dep}  {stops}  {amount_str}")
-            lines.append(f"    Ignore this flight: {ignore_url}\n")
+            if display == current_display:
+                # Current flight is also cheaper — show it but skip the ignore link
+                lines.append(f"  {display}  {dep}  {stops}  {amount_str}  (your current flight — rebooking may save points)\n")
+            else:
+                ignore_url = _with_token(
+                    f"{base}/ignore"
+                    f"?conf={conf}&date={flight_date}&flight={alt['flightNumbers']}"
+                )
+                lines.append(f"  {display}  {dep}  {stops}  {amount_str}")
+                lines.append(f"    Ignore this flight: {ignore_url}\n")
 
         ignore_all_url = _with_token(f"{base}/ignore-all?conf={conf}&date={flight_date}")
         lines.append(f"Ignore ALL alternates for {flight_date}: {ignore_all_url}\n")

@@ -300,6 +300,43 @@ class TestNotificationHandler:
         assert "300" in body
         assert body.count("/ignore?") == 2
 
+    def test_alternate_fares_marks_current_flight_without_ignore_link(
+        self, mocker: MockerFixture
+    ) -> None:
+        """When the current flight is also cheaper it should appear with a rebooking note, no ignore link."""
+        mock_send_notification = mocker.patch.object(NotificationHandler, "send_notification")
+        mock_flight = mocker.patch("lib.flight.Flight")
+        mock_flight.confirmation_number = "ABCDEF"
+        mock_flight.departure_airport = "LAX"
+        mock_flight.destination_airport = "MIA"
+        mock_flight.flight_number = "100"
+
+        alternatives = [
+            {
+                "flightNumbers": "100",
+                "displayNumber": "100",  # same as current flight
+                "departureTime": "08:15",
+                "stopDescription": "Nonstop",
+                "savings": {"amount": -1500, "currencyCode": "PTS"},
+            },
+            {
+                "flightNumbers": "200",
+                "displayNumber": "200",
+                "departureTime": "12:00",
+                "stopDescription": "Nonstop",
+                "savings": {"amount": -1500, "currencyCode": "PTS"},
+            },
+        ]
+
+        self.handler.alternate_fares(mock_flight, alternatives, "2025-12-01", "http://localhost:8765")
+
+        body = mock_send_notification.call_args[0][0]
+        assert "rebooking may save points" in body
+        # Current flight should NOT have an ignore link; alternate should
+        assert body.count("/ignore?") == 1
+        assert "flight=200" in body
+        assert "flight=100" not in body
+
     @pytest.mark.parametrize(("url", "expected_calls"), [("http://healthchecks", 1), (None, 0)])
     def test_healthchecks_success_pings_url_only_if_configured(
         self, mocker: MockerFixture, url: str, expected_calls: int

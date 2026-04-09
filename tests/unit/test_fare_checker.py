@@ -747,10 +747,10 @@ class TestFareChecker:
         assert len(alts) == 1
         assert alts[0]["displayNumber"] == "200"
 
-    def test_check_companion_alternate_fares_excludes_current_flight(
+    def test_check_companion_alternate_fares_includes_current_flight_if_cheaper(
         self, mocker: MockerFixture, companion_flight: Flight
     ) -> None:
-        """The current flight (100) should not appear in alternatives."""
+        """The current flight (100) should appear in alternatives if it is also cheaper."""
         mock_ignore = mocker.MagicMock()
         mock_ignore.is_day_ignored.return_value = False
         mock_ignore.is_ignored.return_value = False
@@ -759,16 +759,18 @@ class TestFareChecker:
         self.checker.reservation_monitor.config.ignore_server_port = 8765
 
         cards = [
-            self._make_public_card(["100"], 10000),  # current flight — excluded
-            self._make_public_card(["200"], 10000),  # alternate — included
+            self._make_public_card(["100"], 10000),  # current flight — also cheaper
+            self._make_public_card(["200"], 10000),  # alternate — also cheaper
         ]
         self.checker._check_companion_alternate_fares(
             companion_flight, cards, "WANNA_GET_AWAY", 12500, "2025-12-01"
         )
 
         alts = mock_alt_fares.call_args[0][1]
-        assert len(alts) == 1
-        assert alts[0]["displayNumber"] == "200"
+        assert len(alts) == 2
+        display_nums = {a["displayNumber"] for a in alts}
+        assert "100" in display_nums
+        assert "200" in display_nums
 
     def test_check_companion_alternate_fares_all_ignored_no_notification(
         self, mocker: MockerFixture, companion_flight: Flight

@@ -380,18 +380,12 @@ class FareChecker:
             def passes_filter(card: JSON) -> bool:
                 return True
 
-        # Current flight number parts for exclusion (strip zero-width chars)
-        current_nums = set(flight.flight_number.replace("\u200b", "").split("/"))
-
         alternatives = []
         for card in cards:
             if not passes_filter(card):
                 continue
 
-            # Skip the current flight
             card_nums = card.get("flightNumbers", [])
-            if any(n in current_nums for n in card_nums):
-                continue
 
             # Get the absolute points price
             try:
