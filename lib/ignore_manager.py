@@ -102,6 +102,9 @@ class IgnoreManager:
 
     def _save(self, data: dict) -> None:
         try:
+            if self._filepath.is_dir():
+                import shutil
+                shutil.rmtree(self._filepath)
             self._filepath.write_text(json.dumps(data, indent=2))
         except OSError as err:
             logger.error("Could not save ignore file: %s", err)
