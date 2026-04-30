@@ -10,6 +10,7 @@ RUN apk add --update --no-cache chromium chromium-chromedriver tini xvfb xauth u
 
 RUN adduser -D auto-southwest-check-in -h /app
 RUN chown -R auto-southwest-check-in:auto-southwest-check-in /app
+RUN mkdir -p /app/data && chown auto-southwest-check-in:auto-southwest-check-in /app/data
 USER auto-southwest-check-in
 
 COPY requirements.txt ./

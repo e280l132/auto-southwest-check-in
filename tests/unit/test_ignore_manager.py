@@ -91,3 +91,29 @@ class TestIgnoreManager:
 
         m2 = IgnoreManager(filepath=tmp_ignore_file)
         assert m2.is_ignored("ABCDEF", FUTURE_DATE, "100")
+
+    def test_cleanup_confirmations_removes_inactive(self, manager: IgnoreManager) -> None:
+        manager.ignore_flight("ABCDEF", FUTURE_DATE, "100")
+        manager.ignore_all_day("ABCDEF", FUTURE_DATE)
+        manager.ignore_flight("ZZZZZZ", FUTURE_DATE, "200")
+        manager.ignore_all_day("ZZZZZZ", FUTURE_DATE)
+
+        manager.cleanup_confirmations({"ZZZZZZ"})
+
+        assert not manager.is_ignored("ABCDEF", FUTURE_DATE, "100")
+        assert not manager.is_day_ignored("ABCDEF", FUTURE_DATE)
+        assert manager.is_ignored("ZZZZZZ", FUTURE_DATE, "200")
+        assert manager.is_day_ignored("ZZZZZZ", FUTURE_DATE)
+
+    def test_cleanup_confirmations_no_op_when_all_active(self, manager: IgnoreManager) -> None:
+        manager.ignore_flight("ABCDEF", FUTURE_DATE, "100")
+        manager.cleanup_confirmations({"ABCDEF", "ZZZZZZ"})
+        assert manager.is_ignored("ABCDEF", FUTURE_DATE, "100")
+
+    def test_cleanup_confirmations_no_write_when_nothing_removed(
+        self, manager: IgnoreManager, tmp_ignore_file: Path
+    ) -> None:
+        manager.ignore_flight("ABCDEF", FUTURE_DATE, "100")
+        mtime_before = tmp_ignore_file.stat().st_mtime
+        manager.cleanup_confirmations({"ABCDEF"})
+        assert tmp_ignore_file.stat().st_mtime == mtime_before

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 from threading import Lock
 
 from .log import get_logger
 
-IGNORE_FILE = Path("ignored_flights.json")
+_data_dir = Path("/app/data") if os.environ.get("AUTO_SOUTHWEST_CHECK_IN_DOCKER") else Path(".")
+IGNORE_FILE = _data_dir / "ignored_flights.json"
 
 logger = get_logger(__name__)
 
@@ -30,6 +32,18 @@ class IgnoreManager:
     # ------------------------------------------------------------------
     # Write operations
     # ------------------------------------------------------------------
+
+    def cleanup_confirmations(self, active_confirmations: set) -> None:
+        """Remove all ignore entries whose confirmation number is no longer in the active set."""
+        with self._lock:
+            data = self._load()
+            before = len(data["specific"]) + len(data["all_day"])
+            data["specific"] = [e for e in data["specific"] if e["confirmation"] in active_confirmations]
+            data["all_day"] = [e for e in data["all_day"] if e["confirmation"] in active_confirmations]
+            removed = before - len(data["specific"]) - len(data["all_day"])
+            if removed:
+                logger.debug("Removed %d ignore entries for inactive confirmations", removed)
+                self._save(data)
 
     def ignore_flight(self, confirmation: str, flight_date: str, alt_flight: str) -> None:
         """Suppress future notifications for a specific alternate flight on a given date."""

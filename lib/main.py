@@ -112,6 +112,12 @@ def set_up_check_in(arguments: list[str]) -> None:
 
     lock = multiprocessing.Lock()
 
+    # Remove ignore entries for reservations no longer in the config.
+    # Accounts are excluded because their confirmation numbers aren't known until runtime.
+    if config.reservations:
+        active_confirmations = {r.confirmation_number for r in config.reservations}
+        IgnoreManager().cleanup_confirmations(active_confirmations)
+
     # Start the ignore server if any config uses same_day_smart fare checking.
     # The server runs as a daemon thread in the main process so it is accessible
     # to the user when clicking ignore links in notification emails.

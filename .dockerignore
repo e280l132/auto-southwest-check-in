@@ -16,6 +16,7 @@ config.example.json
 config.schema.json
 config.json
 ignored_flights.json
+data/
 Dockerfile
 downloaded_files/
 LICENSE
