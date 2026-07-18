@@ -98,6 +98,7 @@ class WebDriver:
 
         # For public flight price scraping
         self.search_request_id = None
+        self.search_response_finished = False
 
     def _should_take_screenshots(self) -> bool:
         """
@@ -300,6 +301,7 @@ class WebDriver:
         """
         driver = self._get_driver()
         driver.add_cdp_listener("Network.responseReceived", self._search_listener)
+        driver.add_cdp_listener("Network.loadingFinished", self._search_finished_listener)
 
         search_url = SEARCH_PAGE_URL.format(origin=origin, destination=destination, date=date)
         logger.debug("Loading public flight search page (route: %s→%s on %s)", origin, destination, date)
@@ -307,7 +309,20 @@ class WebDriver:
         self._take_debug_screenshot(driver, "search_page.png")
 
         self._wait_for_attribute(driver, "search_request_id")
-        response = self._get_response_body(driver, self.search_request_id)
+        # The response body isn't available via CDP until the resource has fully finished
+        # loading. Fetching it right after "Network.responseReceived" can race the browser
+        # and raise "No resource with given identifier found", so wait for
+        # "Network.loadingFinished" on the same request first.
+        self._wait_for_attribute(driver, "search_response_finished")
+
+        try:
+            response = self._get_response_body(driver, self.search_request_id)
+        except Exception as err:
+            self._quit_driver(driver)
+            raise DriverTimeoutError(
+                f"Failed to retrieve public search response body: {err}"
+            ) from err
+
         self._quit_driver(driver)
 
         # Validate that the captured response contains flight pricing data
@@ -342,6 +357,18 @@ class WebDriver:
         if self.search_request_id is None and SEARCH_RESPONSE_URL in url and "shopping" in url:
             logger.debug("Captured flight search response from: %s", url)
             self.search_request_id = data["params"]["requestId"]
+
+    def _search_finished_listener(self, data: JSON) -> None:
+        """
+        Mark the captured search response as finished loading once its
+        "Network.loadingFinished" event arrives, meaning the response body is
+        safe to fetch via CDP.
+        """
+        if (
+            self.search_request_id is not None
+            and data["params"]["requestId"] == self.search_request_id
+        ):
+            self.search_response_finished = True
 
     def _get_response_body(self, driver: Driver, request_id: str) -> JSON:
         response = driver.execute_cdp_cmd("Network.getResponseBody", {"requestId": request_id})

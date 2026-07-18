@@ -424,6 +424,25 @@ class TestWebDriver:
         self.driver._search_listener(data)
         assert self.driver.search_request_id == "first_id"
 
+    # --- _search_finished_listener ---
+
+    def test_search_finished_listener_sets_flag_for_matching_request(self) -> None:
+        self.driver.search_request_id = "test_id"
+        data = {"params": {"requestId": "test_id"}}
+        self.driver._search_finished_listener(data)
+        assert self.driver.search_response_finished is True
+
+    def test_search_finished_listener_ignores_other_requests(self) -> None:
+        self.driver.search_request_id = "test_id"
+        data = {"params": {"requestId": "other_id"}}
+        self.driver._search_finished_listener(data)
+        assert self.driver.search_response_finished is False
+
+    def test_search_finished_listener_ignores_when_no_request_captured_yet(self) -> None:
+        data = {"params": {"requestId": "test_id"}}
+        self.driver._search_finished_listener(data)
+        assert self.driver.search_response_finished is False
+
     # --- get_public_flight_prices ---
 
     def test_get_public_flight_prices_returns_valid_response(
@@ -438,7 +457,7 @@ class TestWebDriver:
         result = self.driver.get_public_flight_prices("LAX", "MIA", "2025-12-01")
 
         assert result == valid_response
-        mock_chrome.add_cdp_listener.assert_called_once()
+        assert mock_chrome.add_cdp_listener.call_count == 2
 
     def test_get_public_flight_prices_raises_on_missing_pricing_data(
         self, mocker: MockerFixture, mock_chrome: mock.Mock
@@ -450,3 +469,18 @@ class TestWebDriver:
 
         with pytest.raises(DriverTimeoutError):
             self.driver.get_public_flight_prices("LAX", "MIA", "2025-12-01")
+
+    def test_get_public_flight_prices_wraps_body_fetch_error(
+        self, mocker: MockerFixture, mock_chrome: mock.Mock
+    ) -> None:
+        mocker.patch.object(self.driver, "_get_driver", return_value=mock_chrome)
+        mocker.patch.object(self.driver, "_wait_for_attribute")
+        mocker.patch.object(
+            self.driver, "_get_response_body", side_effect=Exception("No resource with given identifier found")
+        )
+        mock_quit = mocker.patch.object(self.driver, "_quit_driver")
+
+        with pytest.raises(DriverTimeoutError):
+            self.driver.get_public_flight_prices("LAX", "MIA", "2025-12-01")
+
+        mock_quit.assert_called_once()
