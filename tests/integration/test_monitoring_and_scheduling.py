@@ -63,6 +63,7 @@ def test_flight_is_scheduled_checks_in_and_departs(
     mocker.patch("lib.reservation_monitor.get_current_time", return_value=current_utc_time)
 
     mock_process = mocker.patch("lib.checkin_handler.Process").return_value
+    mock_process.pid = 12345
     mock_new_flights_notification = mocker.patch(
         "lib.notification_handler.NotificationHandler.new_flights"
     )
@@ -70,6 +71,7 @@ def test_flight_is_scheduled_checks_in_and_departs(
         "lib.notification_handler.NotificationHandler.reaccommodated_flights"
     )
     mocker.patch("os.kill")
+    mocker.patch("os.waitpid")
     mock_sleep = mocker.patch("time.sleep")
 
     # Will be checked in a separate integration test
