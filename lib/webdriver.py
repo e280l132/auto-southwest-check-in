@@ -304,7 +304,9 @@ class WebDriver:
         driver.add_cdp_listener("Network.loadingFinished", self._search_finished_listener)
 
         search_url = SEARCH_PAGE_URL.format(origin=origin, destination=destination, date=date)
-        logger.debug("Loading public flight search page (route: %s→%s on %s)", origin, destination, date)
+        logger.debug(
+            "Loading public flight search page (route: %s→%s on %s)", origin, destination, date
+        )
         driver.get(search_url)
         self._take_debug_screenshot(driver, "search_page.png")
 

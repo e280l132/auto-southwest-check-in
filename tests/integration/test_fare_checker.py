@@ -220,13 +220,18 @@ def test_no_fare_drop(
     monitor.notification_handler.lower_fare.assert_not_called()
 
 
-def test_flight_error_with_companion(monitor: ReservationMonitor, flight: Flight) -> None:
+def test_flight_error_with_companion(
+    mocker: MockerFixture, monitor: ReservationMonitor, flight: Flight
+) -> None:
     message = {"body": "You must first cancel the associated companion reservation."}
     flight.reservation_info["greyBoxMessage"] = message
 
     fare_checker = FareChecker(monitor)
-    with pytest.raises(FlightChangeError):
-        fare_checker.check_flight_price(flight)
+    mock_webdriver_check = mocker.patch.object(fare_checker, "_check_companion_fare_via_webdriver")
+
+    fare_checker.check_flight_price(flight)
+
+    mock_webdriver_check.assert_called_once_with(flight, None)
 
 
 def test_flight_error_when_no_change_link_exists(

@@ -140,7 +140,9 @@ class ReservationMonitor:
                     f"Failed fare check,\nconfirmation number = {flight.confirmation_number}"
                 )
             except FlightChangeError as err:
-                logger.info("Skipping fare check for flight %s: %s", flight.confirmation_number, err)
+                logger.info(
+                    "Skipping fare check for flight %s: %s", flight.confirmation_number, err
+                )
                 self.notification_handler.healthchecks_success(
                     f"Successful fare check,\nconfirmation number = {flight.confirmation_number}"
                 )

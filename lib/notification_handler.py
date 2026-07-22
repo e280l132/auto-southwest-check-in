@@ -238,11 +238,13 @@ class NotificationHandler:
             amount_str = f"{savings['amount']:+,} {savings['currencyCode']}"
             if display == current_display:
                 # Current flight is also cheaper — show it but skip the ignore link
-                lines.append(f"  {display}  {dep}  {stops}  {amount_str}  (your current flight — rebooking may save points)\n")
+                lines.append(
+                    f"  {display}  {dep}  {stops}  {amount_str}  "
+                    "(your current flight — rebooking may save points)\n"
+                )
             else:
                 ignore_url = _with_token(
-                    f"{base}/ignore"
-                    f"?conf={conf}&date={flight_date}&flight={alt['flightNumbers']}"
+                    f"{base}/ignore?conf={conf}&date={flight_date}&flight={alt['flightNumbers']}"
                 )
                 lines.append(f"  {display}  {dep}  {stops}  {amount_str}")
                 lines.append(f"    Ignore this flight: {ignore_url}\n")

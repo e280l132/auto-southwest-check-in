@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -38,8 +39,6 @@ def test_flight(mocker: MockerFixture) -> Flight:
 @pytest.fixture
 def companion_flight(mocker: MockerFixture) -> Flight:
     """A flight with a matching bound that includes departure date and fare type."""
-    from datetime import datetime, timezone
-
     mocker.patch.object(Flight, "_set_flight_time")
     flight_info = {
         "departureAirport": {"name": None, "code": "LAX"},
@@ -435,9 +434,7 @@ class TestFareChecker:
         bound = {"flights": [{"number": "WN200"}]}
         assert self.checker._bound_matches_flight(bound, test_flight) is False
 
-    def test_bound_matches_flight_handles_multi_segment_flight(
-        self, mocker: MockerFixture
-    ) -> None:
+    def test_bound_matches_flight_handles_multi_segment_flight(self, mocker: MockerFixture) -> None:
         mocker.patch.object(Flight, "_set_flight_time")
         flight_info = {
             "departureAirport": {"name": None},
@@ -483,7 +480,10 @@ class TestFareChecker:
             self._make_card("WANNA_GET_AWAY", "15000"),
             self._make_card("WANNA_GET_AWAY", "12000"),
         ]
-        assert self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) == 12000
+        assert (
+            self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight)
+            == 12000
+        )
 
     def test_get_lowest_points_skips_update_when_later_card_is_not_cheaper(
         self, test_flight: Flight
@@ -493,7 +493,10 @@ class TestFareChecker:
             self._make_card("WANNA_GET_AWAY", "12000"),
             self._make_card("WANNA_GET_AWAY", "15000"),
         ]
-        assert self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) == 12000
+        assert (
+            self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight)
+            == 12000
+        )
 
     def test_get_lowest_points_returns_none_when_no_filter_match(self, test_flight: Flight) -> None:
         self.checker.filter = fare_checker.same_flight_filter
@@ -503,22 +506,32 @@ class TestFareChecker:
                 **self._make_card("WANNA_GET_AWAY", "12000"),
             }
         ]
-        assert self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        assert (
+            self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        )
 
     def test_get_lowest_points_skips_non_points_currency(self, test_flight: Flight) -> None:
         self.checker.filter = fare_checker.any_flight_filter
         cards = [self._make_card("WANNA_GET_AWAY", "150", currency="USD")]
-        assert self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        assert (
+            self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        )
 
     def test_get_lowest_points_skips_non_numeric_value(self, test_flight: Flight) -> None:
         self.checker.filter = fare_checker.any_flight_filter
         cards = [self._make_card("WANNA_GET_AWAY", "not-a-number")]
-        assert self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        assert (
+            self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        )
 
-    def test_get_lowest_points_returns_none_when_fare_type_missing(self, test_flight: Flight) -> None:
+    def test_get_lowest_points_returns_none_when_fare_type_missing(
+        self, test_flight: Flight
+    ) -> None:
         self.checker.filter = fare_checker.any_flight_filter
         cards = [{"fareProducts": {"ADULT": {}}}]
-        assert self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        assert (
+            self.checker._get_lowest_points_from_cards(cards, "WANNA_GET_AWAY", test_flight) is None
+        )
 
     # --- _public_search_filter ---
 
@@ -536,7 +549,9 @@ class TestFareChecker:
 
     def test_public_search_filter_nonstop_no_match(self, test_flight: Flight) -> None:
         self.checker.filter = fare_checker.nonstop_flight_filter
-        assert self.checker._public_search_filter({"filterTags": ["CONNECTING"]}, test_flight) is False
+        assert (
+            self.checker._public_search_filter({"filterTags": ["CONNECTING"]}, test_flight) is False
+        )
 
     def test_public_search_filter_any_flight_always_true(self, test_flight: Flight) -> None:
         self.checker.filter = fare_checker.any_flight_filter
@@ -628,9 +643,7 @@ class TestFareChecker:
         self, mocker: MockerFixture, companion_flight: Flight
     ) -> None:
         # First bound_matches call (departure date) → True, second (fare type) → False
-        mocker.patch.object(
-            self.checker, "_bound_matches_flight", side_effect=[True, False]
-        )
+        mocker.patch.object(self.checker, "_bound_matches_flight", side_effect=[True, False])
         mock_wd = mocker.MagicMock()
         mock_wd.get_public_flight_prices.return_value = {}
         mocker.patch("lib.webdriver.WebDriver", return_value=mock_wd)
@@ -759,9 +772,7 @@ class TestFareChecker:
             "fareProducts": {
                 "ADULT": {
                     fare_type: {
-                        "fare": {
-                            "totalFare": {"value": str(price_pts), "currencyCode": "POINTS"}
-                        }
+                        "fare": {"totalFare": {"value": str(price_pts), "currencyCode": "POINTS"}}
                     }
                 }
             },
@@ -869,8 +880,6 @@ class TestFareChecker:
         self, mocker: MockerFixture
     ) -> None:
         """A connecting current flight should not filter out connecting alternatives."""
-        from datetime import datetime, timezone
-
         mocker.patch.object(Flight, "_set_flight_time")
         flight_info = {
             "departureAirport": {"name": None, "code": "LAX"},
@@ -970,7 +979,9 @@ class TestFareChecker:
         mock_alt_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
 
         card = self._make_public_card(["200"], 10000)
-        card["fareProducts"]["ADULT"]["WANNA_GET_AWAY"]["fare"]["totalFare"]["value"] = "not-a-number"
+        card["fareProducts"]["ADULT"]["WANNA_GET_AWAY"]["fare"]["totalFare"]["value"] = (
+            "not-a-number"
+        )
         self.checker._check_companion_alternate_fares(
             companion_flight, [card], "WANNA_GET_AWAY", 12500, "2025-12-01"
         )
@@ -995,15 +1006,11 @@ class TestFareChecker:
 
     # --- _is_nonstop ---
 
-    def test_is_nonstop_returns_true_for_single_segment_flight(
-        self, test_flight: Flight
-    ) -> None:
+    def test_is_nonstop_returns_true_for_single_segment_flight(self, test_flight: Flight) -> None:
         # test_flight has flight_number "100" (no zero-width slash)
         assert self.checker._is_nonstop(test_flight) is True
 
-    def test_is_nonstop_returns_false_for_connecting_flight(
-        self, mocker: MockerFixture
-    ) -> None:
+    def test_is_nonstop_returns_false_for_connecting_flight(self, mocker: MockerFixture) -> None:
         mocker.patch.object(Flight, "_set_flight_time")
         flight_info = {
             "departureAirport": {"name": None},
@@ -1043,9 +1050,7 @@ class TestFareChecker:
                 ],
             },
         ]
-        mocker.patch.object(
-            FareChecker, "_get_matching_flights", return_value=(cards, "WGA")
-        )
+        mocker.patch.object(FareChecker, "_get_matching_flights", return_value=(cards, "WGA"))
 
         results = self.checker._get_all_cheaper_flights(test_flight)
 
@@ -1082,9 +1087,7 @@ class TestFareChecker:
                 ],
             },
         ]
-        mocker.patch.object(
-            FareChecker, "_get_matching_flights", return_value=(cards, "WGA")
-        )
+        mocker.patch.object(FareChecker, "_get_matching_flights", return_value=(cards, "WGA"))
 
         results = self.checker._get_all_cheaper_flights(test_flight)
 
@@ -1128,9 +1131,7 @@ class TestFareChecker:
                 ],
             },
         ]
-        mocker.patch.object(
-            FareChecker, "_get_matching_flights", return_value=(cards, "WGA")
-        )
+        mocker.patch.object(FareChecker, "_get_matching_flights", return_value=(cards, "WGA"))
 
         results = self.checker._get_all_cheaper_flights(connecting_flight)
 
@@ -1152,9 +1153,7 @@ class TestFareChecker:
                 ],
             }
         ]
-        mocker.patch.object(
-            FareChecker, "_get_matching_flights", return_value=(cards, "WGA")
-        )
+        mocker.patch.object(FareChecker, "_get_matching_flights", return_value=(cards, "WGA"))
 
         results = self.checker._get_all_cheaper_flights(test_flight)
         assert results == []
@@ -1193,7 +1192,9 @@ class TestFareChecker:
         mock_ignore.is_day_ignored.return_value = False
         mock_ignore.is_ignored.return_value = True
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
-        alternatives = [{"flightNumbers": "200", "savings": {"amount": -2000, "currencyCode": "PTS"}}]
+        alternatives = [
+            {"flightNumbers": "200", "savings": {"amount": -2000, "currencyCode": "PTS"}}
+        ]
         mocker.patch.object(self.checker, "_get_all_cheaper_flights", return_value=alternatives)
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
 
@@ -1208,7 +1209,9 @@ class TestFareChecker:
         mock_ignore.is_day_ignored.return_value = False
         mock_ignore.is_ignored.return_value = False
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
-        alternatives = [{"flightNumbers": "200", "savings": {"amount": -2000, "currencyCode": "PTS"}}]
+        alternatives = [
+            {"flightNumbers": "200", "savings": {"amount": -2000, "currencyCode": "PTS"}}
+        ]
         mocker.patch.object(self.checker, "_get_all_cheaper_flights", return_value=alternatives)
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
         self.checker.reservation_monitor.config.ignore_server_port = 8765

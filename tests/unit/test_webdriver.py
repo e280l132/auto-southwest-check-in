@@ -401,7 +401,9 @@ class TestWebDriver:
     # --- _search_listener ---
 
     def test_search_listener_ignores_non_sw_url(self) -> None:
-        data = {"params": {"response": {"url": "https://example.com/api/shopping"}, "requestId": "id1"}}
+        data = {
+            "params": {"response": {"url": "https://example.com/api/shopping"}, "requestId": "id1"}
+        }
         self.driver._search_listener(data)
         assert self.driver.search_request_id is None
 
@@ -476,7 +478,9 @@ class TestWebDriver:
         mocker.patch.object(self.driver, "_get_driver", return_value=mock_chrome)
         mocker.patch.object(self.driver, "_wait_for_attribute")
         mocker.patch.object(
-            self.driver, "_get_response_body", side_effect=Exception("No resource with given identifier found")
+            self.driver,
+            "_get_response_body",
+            side_effect=Exception("No resource with given identifier found"),
         )
         mock_quit = mocker.patch.object(self.driver, "_quit_driver")
 

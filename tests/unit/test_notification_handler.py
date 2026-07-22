@@ -228,7 +228,9 @@ class TestNotificationHandler:
             }
         ]
 
-        self.handler.alternate_fares(mock_flight, alternatives, "2025-12-01", "http://localhost:8765")
+        self.handler.alternate_fares(
+            mock_flight, alternatives, "2025-12-01", "http://localhost:8765"
+        )
 
         assert mock_send_notification.call_args[0][1] == NotificationLevel.INFO
         body = mock_send_notification.call_args[0][0]
@@ -293,7 +295,9 @@ class TestNotificationHandler:
             },
         ]
 
-        self.handler.alternate_fares(mock_flight, alternatives, "2025-12-01", "http://localhost:8765")
+        self.handler.alternate_fares(
+            mock_flight, alternatives, "2025-12-01", "http://localhost:8765"
+        )
 
         body = mock_send_notification.call_args[0][0]
         assert "200" in body
@@ -303,7 +307,7 @@ class TestNotificationHandler:
     def test_alternate_fares_marks_current_flight_without_ignore_link(
         self, mocker: MockerFixture
     ) -> None:
-        """When the current flight is also cheaper it should appear with a rebooking note, no ignore link."""
+        """Current flight also cheaper: appears with a rebooking note, no ignore link."""
         mock_send_notification = mocker.patch.object(NotificationHandler, "send_notification")
         mock_flight = mocker.patch("lib.flight.Flight")
         mock_flight.confirmation_number = "ABCDEF"
@@ -328,7 +332,9 @@ class TestNotificationHandler:
             },
         ]
 
-        self.handler.alternate_fares(mock_flight, alternatives, "2025-12-01", "http://localhost:8765")
+        self.handler.alternate_fares(
+            mock_flight, alternatives, "2025-12-01", "http://localhost:8765"
+        )
 
         body = mock_send_notification.call_args[0][0]
         assert "rebooking may save points" in body

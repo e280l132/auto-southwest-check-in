@@ -4,15 +4,19 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .log import get_logger
-from .utils import CheckFaresOption, DriverTimeoutError, FlightChangeError, RequestError, make_request, time
+from .utils import (
+    CheckFaresOption,
+    DriverTimeoutError,
+    FlightChangeError,
+    make_request,
+    time,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .flight import Flight
-    from .ignore_manager import IgnoreManager
     from .reservation_monitor import ReservationMonitor
-    from .webdriver import WebDriver
 
 # Type alias for JSON
 JSON = dict[str, Any]
@@ -93,16 +97,17 @@ class FareChecker:
           - Connecting current flight → any alternative (nonstop or connecting) is considered
 
         Each returned dict contains:
-          flightNumbers, displayNumber, departureTime, stopDescription, savings (amount/currencyCode)
+          flightNumbers, displayNumber, departureTime, stopDescription,
+          savings (amount/currencyCode)
         Sorted by savings amount ascending (biggest savings first).
         """
         flights, fare_type = self._get_matching_flights(flight)
 
         # Smart filter: match nonstop preference to the current flight's stop type
         if self._is_nonstop(flight):
-            passes_filter = lambda f: f.get("stopDescription") == "Nonstop"  # noqa: E731
+            passes_filter = lambda card: card.get("stopDescription") == "Nonstop"  # noqa: E731
         else:
-            passes_filter = lambda f: True  # noqa: E731
+            passes_filter = lambda _card: True  # noqa: E731
 
         cheaper = []
         for card in flights:
@@ -130,9 +135,9 @@ class FareChecker:
         same_day_smart entry point: find ALL cheaper same-day alternatives, filter out ignored
         flights, and send a single digest notification if any visible alternatives remain.
         """
-        from .ignore_manager import IgnoreManager  # local import avoids circular dependency
+        from .ignore_manager import IgnoreManager  # noqa: PLC0415 (avoids circular dependency)
 
-        flight_date = flight._local_departure_time.strftime("%Y-%m-%d")
+        flight_date = flight.local_departure_date
         conf = flight.confirmation_number
         ignore_manager = IgnoreManager()
 
@@ -151,16 +156,15 @@ class FareChecker:
                 )
                 self._check_companion_fare_via_webdriver(flight, companion_fare_points)
             else:
-                logger.info(
-                    "Skipping alternate fare check for flight %s: %s", conf, err
-                )
+                logger.info("Skipping alternate fare check for flight %s: %s", conf, err)
             return
         except Exception as err:
             logger.error("Error checking alternate fares for flight %s: %s", conf, err)
             return
 
         visible = [
-            a for a in alternatives
+            a
+            for a in alternatives
             if not ignore_manager.is_ignored(conf, flight_date, a["flightNumbers"])
         ]
 
@@ -175,8 +179,7 @@ class FareChecker:
 
         port = self.reservation_monitor.config.ignore_server_port
         base_url = (
-            self.reservation_monitor.config.ignore_server_base_url
-            or f"http://localhost:{port}"
+            self.reservation_monitor.config.ignore_server_base_url or f"http://localhost:{port}"
         )
         token = self.reservation_monitor.config.ignore_server_token
         self.reservation_monitor.notification_handler.alternate_fares(
@@ -200,7 +203,7 @@ class FareChecker:
         The lowest points fare found is compared against companionFarePoints. If no
         companionFarePoints is configured, the current price is logged for reference.
         """
-        from .webdriver import WebDriver
+        from .webdriver import WebDriver  # noqa: PLC0415 (avoids circular dependency)
 
         # Find the bound that matches this flight to get route/date info
         bounds = flight.reservation_info.get("bounds", [])
@@ -215,7 +218,9 @@ class FareChecker:
                 "Companion webdriver fare check failed for %s: could not determine departure date.",
                 flight.confirmation_number,
             )
-            self._log_companion_unavailable(flight, companion_fare_points, reason="could not determine departure date")
+            self._log_companion_unavailable(
+                flight, companion_fare_points, reason="could not determine departure date"
+            )
             return
 
         origin = flight.departure_airport_code
@@ -231,7 +236,9 @@ class FareChecker:
 
         max_attempts = 2
         response = None
-        for attempt in range(max_attempts):  # pragma: no branch — loop always exits via break/return
+        for attempt in range(
+            max_attempts
+        ):  # pragma: no branch — loop always exits via break/return
             try:
                 webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
                 response = webdriver.get_public_flight_prices(origin, destination, departure_date)
@@ -277,7 +284,9 @@ class FareChecker:
                 "See debug log for response structure.",
                 flight.confirmation_number,
             )
-            self._log_companion_unavailable(flight, companion_fare_points, reason="unexpected search response structure")
+            self._log_companion_unavailable(
+                flight, companion_fare_points, reason="unexpected search response structure"
+            )
             return
 
         # Determine the fare type from the reservation bounds
@@ -301,7 +310,8 @@ class FareChecker:
 
         if lowest_points is None:
             logger.info(
-                "Companion fare check for flight %s: no %s points fare available in public search results.",
+                "Companion fare check for flight %s: no %s points fare available "
+                "in public search results.",
                 flight.confirmation_number,
                 fare_type,
             )
@@ -361,7 +371,7 @@ class FareChecker:
         Unlike the change-shopping API (which returns priceDifference), the public search returns
         absolute prices. Savings are computed as card_price - companion_fare_points.
         """
-        from .ignore_manager import IgnoreManager
+        from .ignore_manager import IgnoreManager  # noqa: PLC0415 (avoids circular dependency)
 
         conf = flight.confirmation_number
         ignore_manager = IgnoreManager()
@@ -374,10 +384,12 @@ class FareChecker:
 
         # Smart nonstop filter: match the current flight's stop preference
         if self._is_nonstop(flight):
+
             def passes_filter(card: JSON) -> bool:
                 return "NONSTOP" in card.get("filterTags", [])
         else:
-            def passes_filter(card: JSON) -> bool:
+
+            def passes_filter(_card: JSON) -> bool:
                 return True
 
         alternatives = []
@@ -445,8 +457,7 @@ class FareChecker:
 
         port = self.reservation_monitor.config.ignore_server_port
         base_url = (
-            self.reservation_monitor.config.ignore_server_base_url
-            or f"http://localhost:{port}"
+            self.reservation_monitor.config.ignore_server_base_url or f"http://localhost:{port}"
         )
         token = self.reservation_monitor.config.ignore_server_token
         self.reservation_monitor.notification_handler.alternate_fares(
@@ -511,7 +522,9 @@ class FareChecker:
         # any_flight_filter — include everything
         return True
 
-    def _log_companion_unavailable(self, flight: Flight, companion_fare_points: int | None, reason: str = "") -> None:
+    def _log_companion_unavailable(
+        self, flight: Flight, companion_fare_points: int | None, reason: str = ""
+    ) -> None:
         """Log a clear INFO message when companion fare checking is unavailable."""
         suffix = f" ({reason})" if reason else ""
         if companion_fare_points is not None:
@@ -579,7 +592,7 @@ class FareChecker:
 
         # Ensure the flight does not have a companion pass connected to it
         # as companion passes are not supported.
-        #self._check_for_companion(reservation_info) # COMMENTED THIS OUT BECAUSE IT PREVENTS CHECKING FARES FOR ANY RESERVATION WITH A COMPANION PASS, EVEN IF THE COMPANION PASS IS NOT CONNECTED TO THE FLIGHT BEING CHECKED
+        self._check_for_companion(reservation_info)
 
         # Next, get the search information needed to change the flight
         logger.debug("Retrieving search information for the current flight")
@@ -627,7 +640,7 @@ class FareChecker:
         return dict(zip(bounds, search_terms))
 
     def _check_for_companion(self, reservation_info: JSON) -> None:
-        grey_box_message = reservation_info["greyBoxMessage"]
+        grey_box_message = reservation_info.get("greyBoxMessage")
         if grey_box_message and "companion" in (grey_box_message.get("body") or ""):
             raise FlightChangeError("Fare check is not supported with companion passes")
 

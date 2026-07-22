@@ -15,9 +15,7 @@ logger = get_logger(__name__)
 _server_thread: threading.Thread | None = None
 
 
-def start_ignore_server(
-    port: int, ignore_manager: IgnoreManager, token: str | None = None
-) -> None:
+def start_ignore_server(port: int, ignore_manager: IgnoreManager, token: str | None = None) -> None:
     """
     Start the ignore HTTP server as a daemon thread. Idempotent — safe to call
     multiple times. Binds to 0.0.0.0 so Docker port mapping works.
@@ -80,7 +78,7 @@ def start_ignore_server(
             self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
-            logger.debug("Ignore server: " + format, *args)
+            logger.debug("Ignore server: %s", format % args)
 
     try:
         server = HTTPServer(("0.0.0.0", port), IgnoreHandler)

@@ -52,6 +52,11 @@ class Flight:
         """
         return self.reservation_info["_links"]["reaccom"] is not None
 
+    @property
+    def local_departure_date(self) -> str:
+        """Returns the flight's departure date (in its local timezone) as YYYY-MM-DD."""
+        return self._local_departure_time.strftime("%Y-%m-%d")
+
     def get_display_time(self, twenty_four_hr_time: bool) -> str:
         if twenty_four_hr_time:
             time_format = "%H:%M"

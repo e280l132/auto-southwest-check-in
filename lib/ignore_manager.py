@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from datetime import date
 from pathlib import Path
 from threading import Lock
@@ -38,8 +39,12 @@ class IgnoreManager:
         with self._lock:
             data = self._load()
             before = len(data["specific"]) + len(data["all_day"])
-            data["specific"] = [e for e in data["specific"] if e["confirmation"] in active_confirmations]
-            data["all_day"] = [e for e in data["all_day"] if e["confirmation"] in active_confirmations]
+            data["specific"] = [
+                e for e in data["specific"] if e["confirmation"] in active_confirmations
+            ]
+            data["all_day"] = [
+                e for e in data["all_day"] if e["confirmation"] in active_confirmations
+            ]
             removed = before - len(data["specific"]) - len(data["all_day"])
             if removed:
                 logger.debug("Removed %d ignore entries for inactive confirmations", removed)
@@ -53,7 +58,10 @@ class IgnoreManager:
             if entry not in data["specific"]:
                 data["specific"].append(entry)
                 logger.debug(
-                    "Ignoring alternate flight %s for %s on %s", alt_flight, confirmation, flight_date
+                    "Ignoring alternate flight %s for %s on %s",
+                    alt_flight,
+                    confirmation,
+                    flight_date,
                 )
             self._cleanup(data)
             self._save(data)
@@ -65,9 +73,7 @@ class IgnoreManager:
             entry = {"confirmation": confirmation, "date": flight_date}
             if entry not in data["all_day"]:
                 data["all_day"].append(entry)
-                logger.debug(
-                    "Ignoring all alternates for %s on %s", confirmation, flight_date
-                )
+                logger.debug("Ignoring all alternates for %s on %s", confirmation, flight_date)
             self._cleanup(data)
             self._save(data)
 
@@ -98,8 +104,7 @@ class IgnoreManager:
 
     def _is_day_ignored_in(self, data: dict, confirmation: str, flight_date: str) -> bool:
         return any(
-            e["confirmation"] == confirmation and e["date"] == flight_date
-            for e in data["all_day"]
+            e["confirmation"] == confirmation and e["date"] == flight_date for e in data["all_day"]
         )
 
     def _load(self) -> dict:
@@ -117,7 +122,6 @@ class IgnoreManager:
     def _save(self, data: dict) -> None:
         try:
             if self._filepath.is_dir():
-                import shutil
                 shutil.rmtree(self._filepath)
             self._filepath.write_text(json.dumps(data, indent=2))
         except OSError as err:
