@@ -231,7 +231,7 @@ class FareChecker:
 
         max_attempts = 2
         response = None
-        for attempt in range(max_attempts):
+        for attempt in range(max_attempts):  # pragma: no branch — loop always exits via break/return
             try:
                 webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
                 response = webdriver.get_public_flight_prices(origin, destination, departure_date)

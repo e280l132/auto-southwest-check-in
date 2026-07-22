@@ -8,6 +8,7 @@ from lib import main
 from lib.config import AccountConfig, GlobalConfig, ReservationConfig
 from lib.notification_handler import NotificationHandler
 from lib.reservation_monitor import AccountMonitor, ReservationMonitor
+from lib.utils import CheckFaresOption
 
 
 @pytest.fixture(autouse=True)
@@ -105,6 +106,44 @@ def test_set_up_check_in_sets_up_account_and_reservation_with_arguments(
     assert len(mock_set_up_accounts.call_args[0][0].accounts) == accounts_len
     assert len(mock_set_up_reservations.call_args[0][0].reservations) == reservations_len
     assert mock_process.join.call_count == len(mock_processes)
+
+
+def test_set_up_check_in_starts_ignore_server_when_same_day_smart_configured(
+    mocker: MockerFixture,
+) -> None:
+    def fake_initialize(self: GlobalConfig) -> None:
+        account = AccountConfig()
+        account.check_fares = CheckFaresOption.SAME_DAY_SMART
+        self.accounts = [account]
+        self.reservations = []
+
+    mocker.patch.object(GlobalConfig, "initialize", fake_initialize)
+    mocker.patch("lib.main.set_up_accounts")
+    mocker.patch("lib.main.set_up_reservations")
+    mocker.patch("multiprocessing.active_children", return_value=[])
+    mock_start_ignore_server = mocker.patch("lib.main.start_ignore_server")
+
+    main.set_up_check_in([])
+
+    mock_start_ignore_server.assert_called_once()
+
+
+def test_set_up_check_in_does_not_start_ignore_server_without_same_day_smart(
+    mocker: MockerFixture,
+) -> None:
+    def fake_initialize(self: GlobalConfig) -> None:
+        self.accounts = [AccountConfig()]
+        self.reservations = []
+
+    mocker.patch.object(GlobalConfig, "initialize", fake_initialize)
+    mocker.patch("lib.main.set_up_accounts")
+    mocker.patch("lib.main.set_up_reservations")
+    mocker.patch("multiprocessing.active_children", return_value=[])
+    mock_start_ignore_server = mocker.patch("lib.main.start_ignore_server")
+
+    main.set_up_check_in([])
+
+    mock_start_ignore_server.assert_not_called()
 
 
 def test_set_up_check_in_sends_error_message_when_arguments_are_invalid(

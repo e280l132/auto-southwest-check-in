@@ -360,3 +360,6 @@ class TestNotificationHandler:
     def test_get_account_name_returns_the_reservation_monitor_name(self) -> None:
         self.handler.reservation_monitor.get_display_name.return_value = "John Doe"
         assert self.handler._get_account_name() == "John Doe"
+
+    def test_format_12hr_returns_original_string_on_invalid_input(self) -> None:
+        assert NotificationHandler._format_12hr("not-a-time") == "not-a-time"

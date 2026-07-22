@@ -141,6 +141,12 @@ class TestConfig:
             {"healthchecks_url": 0},
             {"notifications": "invalid"},
             {"retrieval_interval": "invalid"},
+            {"ignoreServerPort": "invalid"},
+            {"ignoreServerPort": 0},
+            {"ignoreServerPort": 70000},
+            {"ignoreServerBaseUrl": 0},
+            {"ignoreServerToken": 0},
+            {"ignoreServerToken": ""},
         ],
     )
     def test_parse_config_raises_exception_with_invalid_entries(self, config_content: JSON) -> None:
@@ -163,6 +169,9 @@ class TestConfig:
                     }
                 ],
                 "retrieval_interval": 30,
+                "ignoreServerPort": 9000,
+                "ignoreServerBaseUrl": "http://test.com/",
+                "ignoreServerToken": "test_token",
             }
         )
 
@@ -174,6 +183,9 @@ class TestConfig:
             test_config.notifications[0], "test_url", NotificationLevel.ERROR, False
         )
         assert test_config.retrieval_interval == 30 * 60 * 60
+        assert test_config.ignore_server_port == 9000
+        assert test_config.ignore_server_base_url == "http://test.com"
+        assert test_config.ignore_server_token == "test_token"
 
     def test_parse_config_does_not_set_values_when_a_config_value_is_empty(self) -> None:
         test_config = Config()
@@ -599,6 +611,18 @@ class TestReservationConfig:
             {"confirmationNumber": 0, "firstName": "first", "lastName": "last"},
             {"confirmationNumber": "num", "firstName": 0, "lastName": "last"},
             {"confirmationNumber": "num", "firstName": "first", "lastName": 0},
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "companionFarePoints": "invalid",
+            },
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "companionFarePoints": 0,
+            },
         ],
     )
     def test_parse_config_raises_exception_on_invalid_entries(self, config_content: JSON) -> None:
@@ -613,6 +637,7 @@ class TestReservationConfig:
             "firstName": "first",
             "lastName": "last",
             "check_fares": False,
+            "companionFarePoints": 6000,
         }
         test_config._parse_config(reservation_config)
 
@@ -620,6 +645,15 @@ class TestReservationConfig:
         assert test_config.confirmation_number == "num"
         assert test_config.first_name == "first"
         assert test_config.last_name == "last"
+        assert test_config.companion_fare_points == 6000
+
+    def test_parse_config_does_not_set_companion_fare_points_when_not_present(self) -> None:
+        test_config = ReservationConfig()
+        test_config._parse_config(
+            {"confirmationNumber": "num", "firstName": "first", "lastName": "last"}
+        )
+
+        assert test_config.companion_fare_points is None
 
 
 class TestNotificationConfig:

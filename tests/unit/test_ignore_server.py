@@ -103,6 +103,27 @@ class TestIgnoreServer:
         resp = requests.get(url, timeout=5)
         assert resp.status_code == 401
 
+    def test_start_logs_error_when_port_unavailable(
+        self, ignore_manager: IgnoreManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        import lib.ignore_server as mod
+        mod._server_thread = None
+
+        port = _free_port()
+        # Occupy the port so HTTPServer's bind fails with OSError
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.bind(("0.0.0.0", port))
+        blocker.listen(1)
+        try:
+            with caplog.at_level(logging.ERROR, logger="lib.ignore_server"):
+                start_ignore_server(port, ignore_manager)
+            assert mod._server_thread is None
+            assert "Could not start ignore server" in caplog.text
+        finally:
+            blocker.close()
+
     def test_request_with_correct_token_succeeds(self, ignore_manager: IgnoreManager) -> None:
         import lib.ignore_server as mod
         mod._server_thread = None

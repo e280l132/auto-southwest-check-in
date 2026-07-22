@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from pytest_mock import MockerFixture
 
 from lib.ignore_manager import IgnoreManager
 
@@ -73,6 +74,32 @@ class TestIgnoreManager:
 
         assert manager.is_ignored("ABCDEF", today, "100")
         assert manager.is_ignored("ABCDEF", future, "200")
+
+    def test_ignore_all_day_does_not_duplicate(self, manager: IgnoreManager) -> None:
+        manager.ignore_all_day("ABCDEF", FUTURE_DATE)
+        manager.ignore_all_day("ABCDEF", FUTURE_DATE)
+        data = json.loads(manager._filepath.read_text())
+        assert len(data["all_day"]) == 1
+
+    def test_load_returns_empty_when_json_is_not_a_dict(self, tmp_ignore_file: Path) -> None:
+        tmp_ignore_file.write_text("[]")
+        manager = IgnoreManager(filepath=tmp_ignore_file)
+        # Should not raise; a non-dict JSON payload is treated as empty data
+        assert not manager.is_ignored("ABCDEF", "2025-12-01", "100")
+
+    def test_save_removes_directory_at_filepath(self, tmp_ignore_file: Path) -> None:
+        tmp_ignore_file.mkdir()
+        manager = IgnoreManager(filepath=tmp_ignore_file)
+        manager.ignore_flight("ABCDEF", FUTURE_DATE, "100")
+        assert tmp_ignore_file.is_file()
+        assert manager.is_ignored("ABCDEF", FUTURE_DATE, "100")
+
+    def test_save_logs_error_on_oserror(
+        self, manager: IgnoreManager, mocker: MockerFixture
+    ) -> None:
+        mocker.patch.object(Path, "write_text", side_effect=OSError("disk full"))
+        # Should not raise even though the write fails
+        manager.ignore_flight("ABCDEF", FUTURE_DATE, "100")
 
     def test_load_returns_empty_when_file_missing(self, tmp_path: Path) -> None:
         manager = IgnoreManager(filepath=tmp_path / "nonexistent.json")
