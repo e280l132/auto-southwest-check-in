@@ -17,6 +17,25 @@ def mock_config(mocker: MockerFixture) -> None:
     mocker.patch("lib.config.GlobalConfig._read_config")
 
 
+@pytest.fixture(autouse=True)
+def mock_web_ui(mocker: MockerFixture) -> MockerFixture:
+    """
+    The web UI now starts automatically, so avoid actually building a Flask app/binding a port
+    for tests that aren't specifically about the web UI startup itself.
+    """
+    return mocker.patch("lib.main.start_web_ui_background")
+
+
+@pytest.fixture
+def mock_wait(mocker: MockerFixture) -> MockerFixture:
+    """
+    set_up_check_in now blocks (waiting for a reload request) after setup, which isn't relevant
+    to tests that only care about setup behavior. Not autouse, since the tests exercising
+    _wait_for_children_or_reload itself need the real implementation.
+    """
+    return mocker.patch("lib.main._wait_for_children_or_reload")
+
+
 def test_get_timezone_fetches_timezone_from_request(requests_mock: RequestMocker) -> None:
     requests_mock.get(main.IP_TIMEZONE_URL, text="Asia/Tokyo")
     assert main.get_timezone() == "Asia/Tokyo"
@@ -92,12 +111,12 @@ def test_set_up_check_in_sends_test_notifications_when_flag_passed(mocker: Mocke
     ],
 )
 def test_set_up_check_in_sets_up_account_and_reservation_with_arguments(
-    mocker: MockerFixture, arguments: list[str], accounts_len: int, reservations_len: int
+    mocker: MockerFixture,
+    mock_wait: MockerFixture,
+    arguments: list[str],
+    accounts_len: int,
+    reservations_len: int,
 ) -> None:
-    mock_process = mocker.patch("multiprocessing.Process")
-    mock_processes = [mock_process] * (accounts_len + reservations_len)
-    mocker.patch("multiprocessing.active_children", return_value=mock_processes)
-
     mock_set_up_accounts = mocker.patch("lib.main.set_up_accounts")
     mock_set_up_reservations = mocker.patch("lib.main.set_up_reservations")
 
@@ -105,9 +124,10 @@ def test_set_up_check_in_sets_up_account_and_reservation_with_arguments(
 
     assert len(mock_set_up_accounts.call_args[0][0].accounts) == accounts_len
     assert len(mock_set_up_reservations.call_args[0][0].reservations) == reservations_len
-    assert mock_process.join.call_count == len(mock_processes)
+    mock_wait.assert_called_once()
 
 
+@pytest.mark.usefixtures("mock_wait")
 def test_set_up_check_in_starts_ignore_server_when_same_day_smart_configured(
     mocker: MockerFixture,
 ) -> None:
@@ -120,7 +140,6 @@ def test_set_up_check_in_starts_ignore_server_when_same_day_smart_configured(
     mocker.patch.object(GlobalConfig, "initialize", fake_initialize)
     mocker.patch("lib.main.set_up_accounts")
     mocker.patch("lib.main.set_up_reservations")
-    mocker.patch("multiprocessing.active_children", return_value=[])
     mock_start_ignore_server = mocker.patch("lib.main.start_ignore_server")
 
     main.set_up_check_in([])
@@ -128,6 +147,7 @@ def test_set_up_check_in_starts_ignore_server_when_same_day_smart_configured(
     mock_start_ignore_server.assert_called_once()
 
 
+@pytest.mark.usefixtures("mock_wait")
 def test_set_up_check_in_does_not_start_ignore_server_without_same_day_smart(
     mocker: MockerFixture,
 ) -> None:
@@ -138,7 +158,6 @@ def test_set_up_check_in_does_not_start_ignore_server_without_same_day_smart(
     mocker.patch.object(GlobalConfig, "initialize", fake_initialize)
     mocker.patch("lib.main.set_up_accounts")
     mocker.patch("lib.main.set_up_reservations")
-    mocker.patch("multiprocessing.active_children", return_value=[])
     mock_start_ignore_server = mocker.patch("lib.main.start_ignore_server")
 
     main.set_up_check_in([])
@@ -192,3 +211,174 @@ def test_main_exits_on_keyboard_interrupt(mocker: MockerFixture) -> None:
 
     with pytest.raises(SystemExit):
         main.main([], "test_version")
+
+
+# ---------------------------------------------------------------------------
+# Web UI flags and startup
+# ---------------------------------------------------------------------------
+
+
+def test_extract_web_flags_returns_defaults_when_absent() -> None:
+    remaining, web, no_web, port = main._extract_web_flags(["foo", "bar"])
+    assert remaining == ["foo", "bar"]
+    assert web is False
+    assert no_web is False
+    assert port is None
+
+
+def test_extract_web_flags_extracts_web_and_port() -> None:
+    remaining, web, no_web, port = main._extract_web_flags(["foo", "--web", "--web-port", "1234"])
+    assert remaining == ["foo"]
+    assert web is True
+    assert no_web is False
+    assert port == 1234
+
+
+def test_extract_web_flags_extracts_no_web() -> None:
+    remaining, web, no_web, _port = main._extract_web_flags(["foo", "--no-web"])
+    assert remaining == ["foo"]
+    assert web is False
+    assert no_web is True
+
+
+def test_extract_web_flags_exits_when_web_port_missing_value() -> None:
+    with pytest.raises(SystemExit):
+        main._extract_web_flags(["--web-port"])
+
+
+def test_extract_web_flags_exits_when_web_and_no_web_both_present() -> None:
+    with pytest.raises(SystemExit):
+        main._extract_web_flags(["--web", "--no-web"])
+
+
+def test_set_up_check_in_starts_web_ui_by_default(
+    mock_web_ui: MockerFixture, mock_wait: MockerFixture
+) -> None:
+    main.set_up_check_in([])
+    mock_web_ui.assert_called_once()
+    mock_wait.assert_called_once()
+
+
+@pytest.mark.usefixtures("mock_wait")
+def test_set_up_check_in_skips_web_ui_with_no_web_flag(
+    mocker: MockerFixture, mock_web_ui: MockerFixture
+) -> None:
+    mocker.patch("lib.main.set_up_accounts")
+    mocker.patch("lib.main.set_up_reservations")
+
+    main.set_up_check_in(["--no-web"])
+
+    mock_web_ui.assert_not_called()
+
+
+def test_set_up_check_in_web_only_skips_monitoring(
+    mocker: MockerFixture, mock_web_ui: MockerFixture, mock_wait: MockerFixture
+) -> None:
+    mock_set_up_accounts = mocker.patch("lib.main.set_up_accounts")
+    mock_set_up_reservations = mocker.patch("lib.main.set_up_reservations")
+
+    main.set_up_check_in(["--web"])
+
+    mock_web_ui.assert_called_once()
+    mock_wait.assert_called_once()
+    mock_set_up_accounts.assert_not_called()
+    mock_set_up_reservations.assert_not_called()
+
+
+@pytest.mark.usefixtures("mock_wait")
+def test_set_up_check_in_reloads_config_when_requested(mocker: MockerFixture) -> None:
+    mock_set_up_accounts = mocker.patch("lib.main.set_up_accounts")
+    mock_set_up_reservations = mocker.patch("lib.main.set_up_reservations")
+    # Reload requested once, then not requested again on the next check (so the loop exits)
+    mocker.patch("lib.main.app_control.reload_requested", side_effect=[True, False])
+    mock_clear = mocker.patch("lib.main.app_control.clear_reload_request")
+    mock_stop = mocker.patch("lib.main.app_control.stop_monitoring_processes")
+
+    main.set_up_check_in([])
+
+    mock_clear.assert_called_once()
+    mock_stop.assert_called_once()
+    # Once for the initial setup, once more for the reload
+    assert mock_set_up_accounts.call_count == 2
+    assert mock_set_up_reservations.call_count == 2
+
+
+@pytest.mark.usefixtures("mock_wait")
+def test_set_up_check_in_does_not_reload_when_not_requested(mocker: MockerFixture) -> None:
+    mocker.patch("lib.main.set_up_accounts")
+    mocker.patch("lib.main.set_up_reservations")
+    mocker.patch("lib.main.app_control.reload_requested", return_value=False)
+    mock_stop = mocker.patch("lib.main.app_control.stop_monitoring_processes")
+
+    main.set_up_check_in([])
+
+    mock_stop.assert_not_called()
+
+
+def test_set_up_check_in_web_only_clears_reload_request_without_reloading(
+    mocker: MockerFixture, mock_web_ui: MockerFixture, mock_wait: MockerFixture
+) -> None:
+    mocker.patch("lib.main.app_control.reload_requested", side_effect=[True, False])
+    mock_clear = mocker.patch("lib.main.app_control.clear_reload_request")
+
+    main.set_up_check_in(["--web"])
+
+    mock_web_ui.assert_called_once()
+    mock_clear.assert_called_once()
+    assert mock_wait.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# _wait_for_children_or_reload
+# ---------------------------------------------------------------------------
+
+
+def test_wait_for_children_or_reload_joins_children_until_reload(mocker: MockerFixture) -> None:
+    mock_child = mocker.Mock()
+    mocker.patch("multiprocessing.active_children", return_value=[mock_child])
+    # Reload requested only after the first children batch is joined
+    mocker.patch("lib.main.app_control.reload_requested", side_effect=[False, True])
+
+    main._wait_for_children_or_reload()
+
+    mock_child.join.assert_called_once_with(timeout=1)
+
+
+def test_wait_for_children_or_reload_sleeps_when_no_children(mocker: MockerFixture) -> None:
+    mocker.patch("multiprocessing.active_children", return_value=[])
+    mocker.patch("lib.main.app_control.reload_requested", side_effect=[False, False, True])
+    mock_sleep = mocker.patch("lib.main.time.sleep")
+
+    main._wait_for_children_or_reload()
+
+    assert mock_sleep.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# _apply_cli_overrides
+# ---------------------------------------------------------------------------
+
+
+def test_apply_cli_overrides_adds_account_for_two_arguments() -> None:
+    config = GlobalConfig()
+    main._apply_cli_overrides(config, ["username", "password"])
+    assert len(config.accounts) == 1
+
+
+def test_apply_cli_overrides_adds_reservation_for_three_arguments() -> None:
+    config = GlobalConfig()
+    main._apply_cli_overrides(config, ["conf", "First", "Last"])
+    assert len(config.reservations) == 1
+
+
+def test_apply_cli_overrides_does_nothing_for_no_arguments() -> None:
+    config = GlobalConfig()
+    main._apply_cli_overrides(config, [])
+    assert config.accounts == []
+    assert config.reservations == []
+
+
+def test_apply_cli_overrides_exits_for_too_many_arguments() -> None:
+    config = GlobalConfig()
+    with pytest.raises(SystemExit):
+        main._apply_cli_overrides(config, ["1", "2", "3", "4"])

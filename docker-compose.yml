@@ -4,6 +4,8 @@ services:
     container_name: auto-southwest
     restart: on-failure
     user: "0:0"
+    ports:
+      - "9000:9000"
     volumes:
       - /mnt/docker_data/southwest/config.json:/app/config.json:ro
       - /mnt/docker_data/southwest:/app/data

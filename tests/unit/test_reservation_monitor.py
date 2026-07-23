@@ -9,6 +9,7 @@ from lib.checkin_handler import CheckInHandler
 from lib.checkin_scheduler import CheckInScheduler
 from lib.config import AccountConfig, ReservationConfig
 from lib.fare_checker import FareChecker
+from lib.flight import Flight
 from lib.notification_handler import NotificationHandler
 from lib.reservation_monitor import TOO_MANY_REQUESTS_CODE, AccountMonitor, ReservationMonitor
 from lib.utils import (
@@ -184,6 +185,53 @@ class TestReservationMonitor:
         self.monitor._check_flight_fares()
 
         assert mock_check_flight_price.call_count == len(self.monitor.checkin_scheduler.flights)
+
+    def test_check_fares_for_flights_returns_result_per_flight(self, mocker: MockerFixture) -> None:
+        test_flight = mocker.patch("lib.flight.Flight")
+        mock_result = mocker.MagicMock()
+        mocker.patch.object(FareChecker, "check_flight_price", return_value=mock_result)
+
+        self.monitor.config.check_fares = CheckFaresOption.SAME_FLIGHT
+        results = self.monitor.check_fares_for_flights([test_flight, test_flight])
+
+        assert results == [mock_result, mock_result]
+
+    def test_check_fares_for_flights_returns_error_result_on_exception(
+        self, mocker: MockerFixture
+    ) -> None:
+        test_flight = mocker.patch("lib.flight.Flight")
+        mocker.patch.object(FareChecker, "check_flight_price", side_effect=RequestError("boom"))
+
+        results = self.monitor.check_fares_for_flights([test_flight])
+
+        assert len(results) == 1
+        assert results[0].status == "error"
+
+    @pytest.mark.parametrize("exception", [RequestError(""), FlightChangeError, Exception])
+    def test_check_fares_for_flights_survives_a_flight_with_no_departure_time(
+        self, mocker: MockerFixture, exception: Exception
+    ) -> None:
+        """
+        Building the error result must not raise, or it would replace the original error and
+        propagate out of _monitor(), ending this reservation's monitoring entirely.
+        """
+        mocker.patch.object(Flight, "_set_flight_time")
+        flight_info = {
+            "departureAirport": {"name": None},
+            "arrivalAirport": {"name": None, "country": None},
+            "departureTime": None,
+            "flights": [{"number": "WN100"}],
+        }
+        # _set_flight_time is stubbed, so _local_departure_time stays None and the display
+        # properties raise when touched
+        flight = Flight(flight_info, {"bounds": [flight_info]}, "ABCDEF")
+        mocker.patch.object(FareChecker, "check_flight_price", side_effect=exception)
+
+        results = self.monitor.check_fares_for_flights([flight])
+
+        assert len(results) == 1
+        assert results[0].local_departure_date == ""
+        assert results[0].display_time == ""
 
     def test_smart_sleep_sleeps_for_correct_time(self, mocker: MockerFixture) -> None:
         mock_sleep = mocker.patch("time.sleep")

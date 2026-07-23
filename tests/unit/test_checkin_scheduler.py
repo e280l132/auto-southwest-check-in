@@ -57,6 +57,37 @@ class TestCheckInScheduler:
         self.scheduler.refresh_headers()
         mock_webdriver_set_headers.assert_called_once()
 
+    def test_fetch_flights_delegates_to_get_flights(self, mocker: MockerFixture) -> None:
+        mock_get_flights = mocker.patch.object(
+            CheckInScheduler, "_get_flights", return_value=["flight"]
+        )
+
+        result = self.scheduler.fetch_flights("test1")
+
+        mock_get_flights.assert_called_once_with("test1")
+        assert result == ["flight"]
+
+    def test_fetch_flights_does_not_schedule_check_ins(
+        self, mocker: MockerFixture, test_flights: list[Flight]
+    ) -> None:
+        """Regression guard: the web UI relies on fetch_flights never scheduling check-ins."""
+        mocker.patch.object(
+            CheckInScheduler, "_get_reservation_info", return_value={"bounds": [{}, {}]}
+        )
+        test_flights[0].departure_time = datetime(1999, 12, 30, 18, 29)
+        test_flights[1].departure_time = datetime(1999, 12, 31, 20, 29)
+        mocker.patch("lib.checkin_scheduler.Flight", side_effect=test_flights)
+        mocker.patch(
+            "lib.checkin_scheduler.get_current_time",
+            return_value=datetime(1999, 12, 30, 18, 20),
+        )
+        mock_schedule_check_in = mocker.patch.object(CheckInHandler, "schedule_check_in")
+
+        result = self.scheduler.fetch_flights("test1")
+
+        assert len(result) == 2
+        mock_schedule_check_in.assert_not_called()
+
     def test_get_flights_retrieves_all_flights_under_reservation(
         self, mocker: MockerFixture, test_flights: list[Flight]
     ) -> None:

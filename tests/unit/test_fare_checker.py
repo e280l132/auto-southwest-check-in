@@ -73,9 +73,12 @@ class TestFareChecker:
         mocker.patch.object(FareChecker, "_get_flight_price", return_value=flight_price)
         mock_lower_fare_notification = mocker.patch.object(NotificationHandler, "lower_fare")
 
-        self.checker.check_flight_price(test_flight)
+        result = self.checker.check_flight_price(test_flight)
 
         mock_lower_fare_notification.assert_called_once()
+        assert result.status == "lower_fare"
+        assert result.currency_code == "USD"
+        assert result.difference_amount == -10
 
     # -1 dollar fares are a false positive and are treated as a higher fare
     @pytest.mark.parametrize("amount", [10, 0, -1])
@@ -86,8 +89,10 @@ class TestFareChecker:
         mocker.patch.object(FareChecker, "_get_flight_price", return_value=flight_price)
         mock_lower_fare_notification = mocker.patch.object(NotificationHandler, "lower_fare")
 
-        self.checker.check_flight_price(test_flight)
+        result = self.checker.check_flight_price(test_flight)
         mock_lower_fare_notification.assert_not_called()
+        assert result.status == "no_lower_fare"
+        assert result.difference_amount == amount
 
     def test_check_flight_price_same_day_smart_delegates_to_check_all_alternate_fares(
         self, mocker: MockerFixture, test_flight: Flight
@@ -111,9 +116,10 @@ class TestFareChecker:
             self.checker, "_check_companion_fare_via_webdriver"
         )
 
-        self.checker.check_flight_price(test_flight)
+        result = self.checker.check_flight_price(test_flight)
 
         mock_webdriver_check.assert_called_once()
+        assert result is mock_webdriver_check.return_value
 
     def test_check_flight_price_flight_change_error_non_companion_reraises(
         self, mocker: MockerFixture, test_flight: Flight
@@ -665,9 +671,13 @@ class TestFareChecker:
         mock_lower_fare = mocker.patch.object(NotificationHandler, "lower_fare")
 
         # companion_fare_points=12500, lowest=10000 → difference=-2500 → lower fare
-        self.checker._check_companion_fare_via_webdriver(companion_flight, 12500)
+        result = self.checker._check_companion_fare_via_webdriver(companion_flight, 12500)
 
         mock_lower_fare.assert_called_once()
+        assert result.status == "lower_fare"
+        assert result.current_points == 10000
+        assert result.paid_points == 12500
+        assert result.difference_amount == -2500
 
     def test_check_companion_fare_via_webdriver_logs_no_lower_fare(
         self, mocker: MockerFixture, companion_flight: Flight, caplog: pytest.LogCaptureFixture
@@ -731,9 +741,10 @@ class TestFareChecker:
         mocker.patch.object(self.checker, "_get_lowest_points_from_cards", return_value=10000)
         mock_alt = mocker.patch.object(self.checker, "_check_companion_alternate_fares")
 
-        self.checker._check_companion_fare_via_webdriver(companion_flight, 12500)
+        result = self.checker._check_companion_fare_via_webdriver(companion_flight, 12500)
 
         mock_alt.assert_called_once()
+        assert result is mock_alt.return_value
 
     def test_check_companion_fare_via_webdriver_same_day_smart_no_fare_points_logs(
         self, mocker: MockerFixture, companion_flight: Flight, caplog: pytest.LogCaptureFixture
@@ -757,18 +768,83 @@ class TestFareChecker:
     # --- _check_companion_alternate_fares ---
 
     @staticmethod
+    def _make_change_card(
+        flight_numbers: str,
+        sign: str,
+        amount: str,
+        fare_type: str = "WGA",
+        nonstop: bool = True,
+        dep_time: str = "08:00",
+    ) -> dict:
+        """Build a change-shopping card, which reports a price difference rather than a price."""
+        return {
+            "flightNumbers": flight_numbers,
+            "departureTime": dep_time,
+            "stopDescription": "Nonstop" if nonstop else "1 Stop, LAX",
+            "fares": [
+                {
+                    "_meta": {"fareProductId": fare_type},
+                    "priceDifference": {
+                        "amount": amount,
+                        "sign": sign,
+                        "currencyCode": "PTS",
+                    },
+                }
+            ],
+        }
+
+    @staticmethod
+    def _make_board_entry(
+        flight_numbers: str,
+        difference: int | None,
+        *,
+        nonstop: bool = True,
+        is_current: bool = False,
+        points: int | None = None,
+        departure_time: str = "08:00",
+    ) -> dict:
+        """Build a normalized same-day board entry, matching FareChecker._board_entry."""
+        return {
+            "flightNumbers": flight_numbers,
+            "displayNumber": flight_numbers.replace("​", ""),
+            "departureTime": departure_time,
+            "stopDescription": "Nonstop" if nonstop else "1 Stop, LAX",
+            "isCurrent": is_current,
+            "isNonstop": nonstop,
+            "points": points,
+            "difference": difference,
+            "currencyCode": "PTS" if difference is not None else None,
+            "unavailable": difference is None and points is None,
+            "isCheaper": difference is not None and difference < -1,
+        }
+
+    @staticmethod
     def _make_public_card(
         flight_nums: list[str],
         price_pts: int,
         fare_type: str = "WANNA_GET_AWAY",
         nonstop: bool = True,
         dep_time: str = "08:00",
+        connecting_airport: str = "LAX",
     ) -> dict:
+        """
+        Mirrors a real public-search flight card. There is no 'stopDescription' field on the real
+        API (that's the change-shopping API's field name) — stops are derived from 'segments',
+        one entry per marketing flight leg, with the layover airport on the first segment.
+        """
+        segments = (
+            [{"destinationAirportCode": ""}]
+            if nonstop
+            else [
+                {"destinationAirportCode": connecting_airport},
+                {"destinationAirportCode": flight_nums[-1]},
+            ]
+        )
         return {
             "flightNumbers": flight_nums,
             "filterTags": ["NONSTOP"] if nonstop else [],
             "departureTime": dep_time,
-            "stopDescription": "Nonstop" if nonstop else "1 Stop, LAX",
+            "segments": segments,
             "fareProducts": {
                 "ADULT": {
                     fare_type: {
@@ -1021,6 +1097,161 @@ class TestFareChecker:
         connecting_flight = Flight(flight_info, {"bounds": []}, "")
         assert self.checker._is_nonstop(connecting_flight) is False
 
+    # --- board builders ---
+
+    def test_build_change_board_includes_flights_that_are_not_cheaper(
+        self, test_flight: Flight
+    ) -> None:
+        cards = [
+            self._make_change_card("200", "-", "1,500", dep_time="10:00"),
+            self._make_change_card("300", "+", "2,000", dep_time="08:00"),
+        ]
+
+        board = self.checker._build_change_board(cards, "WGA", test_flight)
+
+        # Sorted by departure time, and the more expensive flight is kept rather than dropped
+        assert [entry["displayNumber"] for entry in board] == ["300", "200"]
+        assert [entry["difference"] for entry in board] == [2000, -1500]
+        assert [entry["isCheaper"] for entry in board] == [False, True]
+        # The change-shopping API never reports an absolute price
+        assert all(entry["points"] is None for entry in board)
+
+    def test_build_change_board_flags_the_current_flight(self, test_flight: Flight) -> None:
+        cards = [
+            self._make_change_card("100", "-", "500"),
+            self._make_change_card("200", "-", "700"),
+        ]
+
+        board = self.checker._build_change_board(cards, "WGA", test_flight)
+
+        current = [entry for entry in board if entry["isCurrent"]]
+        assert len(current) == 1
+        assert current[0]["displayNumber"] == "100"
+
+    def test_build_change_board_marks_missing_fare_type_unavailable(
+        self, test_flight: Flight
+    ) -> None:
+        cards = [self._make_change_card("200", "-", "1,500", fare_type="ANYTIME")]
+
+        board = self.checker._build_change_board(cards, "WGA", test_flight)
+
+        assert board[0]["unavailable"] is True
+        assert board[0]["difference"] is None
+        assert board[0]["isCheaper"] is False
+
+    def test_build_public_board_includes_flights_that_are_not_cheaper(
+        self, companion_flight: Flight
+    ) -> None:
+        cards = [
+            self._make_public_card(["200"], 15000, dep_time="10:00"),
+            self._make_public_card(["300"], 11000, dep_time="08:00"),
+        ]
+
+        board = self.checker._build_public_board(cards, "WANNA_GET_AWAY", companion_flight, 12500)
+
+        assert [entry["displayNumber"] for entry in board] == ["300", "200"]
+        # The public search reports absolute prices, so both price and difference are known
+        assert [entry["points"] for entry in board] == [11000, 15000]
+        assert [entry["difference"] for entry in board] == [-1500, 2500]
+        assert [entry["isCheaper"] for entry in board] == [True, False]
+
+    def test_build_public_board_flags_the_current_flight(self, companion_flight: Flight) -> None:
+        cards = [
+            self._make_public_card(["100"], 12000),
+            self._make_public_card(["200"], 11000),
+        ]
+
+        board = self.checker._build_public_board(cards, "WANNA_GET_AWAY", companion_flight, 12500)
+
+        current = [entry for entry in board if entry["isCurrent"]]
+        assert len(current) == 1
+        assert current[0]["displayNumber"] == "100"
+
+    def test_build_public_board_without_paid_points_still_reports_prices(
+        self, companion_flight: Flight
+    ) -> None:
+        cards = [self._make_public_card(["200"], 11000)]
+
+        board = self.checker._build_public_board(cards, "WANNA_GET_AWAY", companion_flight, None)
+
+        assert board[0]["points"] == 11000
+        assert board[0]["difference"] is None
+        assert board[0]["unavailable"] is False
+
+    def test_build_public_board_marks_missing_fare_type_unavailable(
+        self, companion_flight: Flight
+    ) -> None:
+        cards = [self._make_public_card(["200"], 11000, fare_type="ANYTIME")]
+
+        board = self.checker._build_public_board(cards, "WANNA_GET_AWAY", companion_flight, 12500)
+
+        assert board[0]["unavailable"] is True
+        assert board[0]["points"] is None
+
+    # --- _get_card_stop_description ---
+    # Regression coverage for a real bug: public search cards never had a 'stopDescription'
+    # field (that name only exists on change-shopping cards), so the Stops column was always
+    # blank. These use the exact shape captured from a real Southwest public search response.
+
+    def test_get_card_stop_description_nonstop(self) -> None:
+        card = {
+            "flightNumbers": ["3378"],
+            "segments": [{"originationAirportCode": "LGA", "destinationAirportCode": "STL"}],
+        }
+        assert self.checker._get_card_stop_description(card) == "Nonstop"
+
+    def test_get_card_stop_description_one_stop_names_the_layover_airport(self) -> None:
+        card = {
+            "flightNumbers": ["2411", "2838"],
+            "segments": [
+                {"originationAirportCode": "LGA", "destinationAirportCode": "MDW"},
+                {"originationAirportCode": "MDW", "destinationAirportCode": "STL"},
+            ],
+        }
+        assert self.checker._get_card_stop_description(card) == "1 Stop, MDW"
+
+    def test_get_card_stop_description_two_stops_are_pluralized(self) -> None:
+        card = {
+            "flightNumbers": ["100", "200", "300"],
+            "segments": [
+                {"destinationAirportCode": "MDW"},
+                {"destinationAirportCode": "DEN"},
+                {"destinationAirportCode": "STL"},
+            ],
+        }
+        assert self.checker._get_card_stop_description(card) == "2 Stops, MDW"
+
+    def test_get_card_stop_description_missing_segments_defaults_to_nonstop(self) -> None:
+        assert self.checker._get_card_stop_description({"flightNumbers": ["3378"]}) == "Nonstop"
+
+    def test_build_public_board_fills_in_stop_description_for_connections(
+        self, companion_flight: Flight
+    ) -> None:
+        cards = [self._make_public_card(["2411", "2838"], 17000, nonstop=False)]
+
+        board = self.checker._build_public_board(cards, "WANNA_GET_AWAY", companion_flight, 13500)
+
+        assert board[0]["stopDescription"] == "1 Stop, LAX"
+
+    def test_board_result_fields_take_price_from_the_current_flight(self) -> None:
+        board = [
+            self._make_board_entry("100", -2500, is_current=True, points=11000),
+            self._make_board_entry("200", -4000, points=9500),
+        ]
+
+        fields = self.checker._board_result_fields(board, "WGA")
+
+        assert fields["current_points"] == 11000
+        assert fields["difference_amount"] == -2500
+        assert fields["fare_type"] == "WGA"
+        assert fields["board"] == board
+
+    def test_board_result_fields_without_a_current_flight(self) -> None:
+        fields = self.checker._board_result_fields([self._make_board_entry("200", -4000)], "WGA")
+
+        assert fields["current_points"] is None
+        assert fields["difference_amount"] is None
+
     # --- _get_all_cheaper_flights ---
 
     def test_get_all_cheaper_flights_returns_sorted_cheaper_options(
@@ -1168,9 +1399,10 @@ class TestFareChecker:
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
         mock_get_all = mocker.patch.object(self.checker, "_get_all_cheaper_flights")
 
-        self.checker._check_all_alternate_fares(companion_flight)
+        result = self.checker._check_all_alternate_fares(companion_flight)
 
         mock_get_all.assert_not_called()
+        assert result.status == "skipped"
 
     def test_check_all_alternate_fares_no_cheaper_flights_no_notification(
         self, mocker: MockerFixture, companion_flight: Flight
@@ -1178,12 +1410,13 @@ class TestFareChecker:
         mock_ignore = mocker.MagicMock()
         mock_ignore.is_day_ignored.return_value = False
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
-        mocker.patch.object(self.checker, "_get_all_cheaper_flights", return_value=[])
+        mocker.patch.object(self.checker, "_get_change_board", return_value=([], "WGA"))
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
 
-        self.checker._check_all_alternate_fares(companion_flight)
+        result = self.checker._check_all_alternate_fares(companion_flight)
 
         mock_alternate_fares.assert_not_called()
+        assert result.status == "no_lower_fare"
 
     def test_check_all_alternate_fares_all_ignored_no_notification(
         self, mocker: MockerFixture, companion_flight: Flight
@@ -1192,10 +1425,8 @@ class TestFareChecker:
         mock_ignore.is_day_ignored.return_value = False
         mock_ignore.is_ignored.return_value = True
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
-        alternatives = [
-            {"flightNumbers": "200", "savings": {"amount": -2000, "currencyCode": "PTS"}}
-        ]
-        mocker.patch.object(self.checker, "_get_all_cheaper_flights", return_value=alternatives)
+        board = [self._make_board_entry("200", -2000)]
+        mocker.patch.object(self.checker, "_get_change_board", return_value=(board, "WGA"))
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
 
         self.checker._check_all_alternate_fares(companion_flight)
@@ -1209,16 +1440,19 @@ class TestFareChecker:
         mock_ignore.is_day_ignored.return_value = False
         mock_ignore.is_ignored.return_value = False
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
-        alternatives = [
-            {"flightNumbers": "200", "savings": {"amount": -2000, "currencyCode": "PTS"}}
-        ]
-        mocker.patch.object(self.checker, "_get_all_cheaper_flights", return_value=alternatives)
+        board = [self._make_board_entry("200", -2000)]
+        mocker.patch.object(self.checker, "_get_change_board", return_value=(board, "WGA"))
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
         self.checker.reservation_monitor.config.ignore_server_port = 8765
 
-        self.checker._check_all_alternate_fares(companion_flight)
+        result = self.checker._check_all_alternate_fares(companion_flight)
 
         mock_alternate_fares.assert_called_once()
+        assert result.status == "lower_fare"
+        assert [a["flightNumbers"] for a in result.alternatives] == ["200"]
+        assert result.alternatives[0]["savings"] == {"amount": -2000, "currencyCode": "PTS"}
+        # The full board is carried for display, not just the cheaper subset
+        assert result.board == board
 
     def test_check_all_alternate_fares_flight_change_error_handled(
         self, mocker: MockerFixture, companion_flight: Flight
@@ -1227,7 +1461,7 @@ class TestFareChecker:
         mock_ignore.is_day_ignored.return_value = False
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
         mocker.patch.object(
-            self.checker, "_get_all_cheaper_flights", side_effect=FlightChangeError("blocked")
+            self.checker, "_get_change_board", side_effect=FlightChangeError("blocked")
         )
         mocker.patch.object(self.checker, "_is_companion_flight", return_value=False)
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
@@ -1244,7 +1478,7 @@ class TestFareChecker:
         mock_ignore.is_day_ignored.return_value = False
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
         mocker.patch.object(
-            self.checker, "_get_all_cheaper_flights", side_effect=FlightChangeError("blocked")
+            self.checker, "_get_change_board", side_effect=FlightChangeError("blocked")
         )
         mocker.patch.object(self.checker, "_is_companion_flight", return_value=True)
         mocker.patch.object(self.checker, "_is_reaccommodated", return_value=False)
@@ -1262,9 +1496,7 @@ class TestFareChecker:
         mock_ignore = mocker.MagicMock()
         mock_ignore.is_day_ignored.return_value = False
         mocker.patch("lib.ignore_manager.IgnoreManager", return_value=mock_ignore)
-        mocker.patch.object(
-            self.checker, "_get_all_cheaper_flights", side_effect=ValueError("unexpected")
-        )
+        mocker.patch.object(self.checker, "_get_change_board", side_effect=ValueError("unexpected"))
         mock_alternate_fares = mocker.patch.object(NotificationHandler, "alternate_fares")
 
         # Should not raise

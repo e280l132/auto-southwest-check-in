@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}{% if reservation %}Edit flight{% else %}Add flight{% endif %}{% endblock %}
+{% block content %}
+
+{% set conf = reservation.confirmationNumber if reservation else "" %}
+
+<p><a class="back-link" href="{{ url_for('index') }}">&larr; Back to flights</a></p>
+
+<h2 class="page-title">{% if reservation %}Edit {{ conf }}{% else %}Add a flight{% endif %}</h2>
+
+{% if last_error %}
+<p class="notice notice-error">
+    The last check failed: {{ last_error }}
+    <span class="notice-hint-text">A mismatched passenger name or confirmation number is the
+        usual cause &mdash; both must match the Southwest reservation exactly.</span>
+</p>
+{% endif %}
+
+{% if unknown_keys %}
+<div class="notice notice-warn">
+    <p>
+        config.json contains
+        {% for key in unknown_keys %}<code>{{ key }}</code>{% if not loop.last %}, {% endif %}{% endfor %},
+        which {{ 'are' if unknown_keys|length != 1 else 'is' }} not a recognized setting and
+        {{ 'have' if unknown_keys|length != 1 else 'has' }} no effect.
+        Saving this form does not remove it &mdash; use a rename button below if one is available.
+    </p>
+    {% for bad, good in fixable_keys.items() %}
+    <form class="fix-key-form" method="post"
+          action="{{ url_for('fix_reservation_key', confirmation_number=conf) }}">
+        <input type="hidden" name="key" value="{{ bad }}">
+        <button type="submit" class="btn btn-secondary btn-sm">
+            Rename <code>{{ bad }}</code> &rarr; <code>{{ good }}</code>
+        </button>
+    </form>
+    {% endfor %}
+</div>
+{% endif %}
+
+<form class="card form"
+      method="post"
+      action="{% if reservation %}{{ url_for('update_reservation', confirmation_number=conf) }}{% else %}{{ url_for('create_reservation') }}{% endif %}">
+
+    <fieldset>
+        <legend>Reservation</legend>
+
+        <label>
+            Confirmation number
+            <input type="text" name="confirmationNumber" required value="{{ conf }}"
+                   autocomplete="off" spellcheck="false">
+        </label>
+
+        <div class="field-row">
+            <label>
+                First name
+                <input type="text" name="firstName" required autocomplete="off"
+                       value="{{ reservation.firstName if reservation else '' }}">
+            </label>
+            <label>
+                Last name
+                <input type="text" name="lastName" required autocomplete="off"
+                       value="{{ reservation.lastName if reservation else '' }}">
+            </label>
+        </div>
+        <p class="hint">Must match the passenger name on the Southwest reservation exactly.</p>
+    </fieldset>
+
+    <fieldset>
+        <legend>What you paid</legend>
+        <p class="hint">
+            Southwest only reports a difference from your original fare, never the fare itself.
+            Recording it here is what lets the flight board show real prices.
+        </p>
+
+        <div class="field-row">
+            <label>
+                Points paid
+                <input type="number" name="originalFarePoints" min="1" placeholder="e.g. 18500"
+                       value="{{ reservation.originalFarePoints if reservation and reservation.originalFarePoints is defined else '' }}">
+            </label>
+            <label>
+                Taxes &amp; fees (USD)
+                <input type="number" name="originalTaxesFees" min="0" step="0.01" placeholder="e.g. 5.60"
+                       value="{{ reservation.originalTaxesFees if reservation and reservation.originalTaxesFees is defined else '' }}">
+            </label>
+        </div>
+
+        <label>
+            Companion fare points
+            <input type="number" name="companionFarePoints" min="1"
+                   value="{{ reservation.companionFarePoints if reservation and reservation.companionFarePoints is defined else '' }}">
+            <span class="hint">Only for companion-pass reservations. Companion fares are priced
+                through Southwest's public search and compared against this number.</span>
+        </label>
+    </fieldset>
+
+    <fieldset>
+        <legend>Fare checking</legend>
+        {% set current_mode = reservation.check_fares if reservation and reservation.check_fares is defined else "" %}
+        <label>
+            Mode
+            <select name="check_fares">
+                <option value="">Use the global setting</option>
+                {% for mode in ["no", "same_flight", "same_day_nonstop", "same_day", "same_day_smart"] %}
+                    <option value="{{ mode }}" {% if current_mode == mode %}selected{% endif %}>{{ mode }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </fieldset>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+            {% if reservation %}Save changes{% else %}Add flight{% endif %}
+        </button>
+        <a class="btn btn-ghost" href="{{ url_for('index') }}">Cancel</a>
+    </div>
+</form>
+
+{% if reservation %}
+<form class="danger-zone"
+      method="post"
+      action="{{ url_for('delete_reservation', confirmation_number=conf) }}"
+      onsubmit="return confirm('Remove {{ conf }} from config.json? Its saved fare results will also be cleared.');">
+    <button type="submit" class="btn btn-danger">Remove this flight</button>
+    <span class="hint">Removes it from config.json and clears its cached results.</span>
+</form>
+{% endif %}
+
+<p class="muted note">
+    Changes are written to <code>config.json</code> and apply here immediately.
+    A running check-in daemon keeps its old configuration until it is restarted.
+    Your <code>accounts</code> and <code>notifications</code> settings are never read or modified.
+</p>
+
+{% endblock %}

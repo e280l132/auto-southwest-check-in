@@ -23,6 +23,8 @@ reservation-specific configurations).
     * [Accounts](#accounts)
     * [Reservations](#reservations)
         - [Companion Fare Points](#companion-fare-points)
+        - [Original Fare Points](#original-fare-points)
+        - [Original Taxes & Fees](#original-taxes--fees)
 - [Healthchecks URL](#healthchecks-url)
 
 ## Check Fares
@@ -310,6 +312,53 @@ This option is only applicable to reservation configurations (not account config
 ```
 
 When used with `same_day_smart`, the script will also search for cheaper alternative flights for the companion reservation and include them in the digest notification.
+
+#### Original Fare Points
+Default: None \
+Type: Integer (reservation-only)
+
+Southwest's fare-check APIs only ever report the *difference* between today's price and what you originally paid, not an absolute figure. Set `originalFarePoints` to the number of points you originally paid for this reservation so the [Web UI](README.md#web-ui) can show the current fare found and the savings as absolute numbers, not just a delta.
+
+This is purely for display in the web UI — it does not change any fare-checking behavior. If not set, the web UI will show the original fare as "not tracked" (or fall back to `companionFarePoints`, if that is set on a companion-pass reservation).
+
+This value can also be set from the [web UI](README.md#editing-reservations) without editing this file by hand.
+
+This option is only applicable to reservation configurations (not account configurations).
+
+```json
+{
+    "reservations": [
+        {
+            "confirmationNumber": "ABCDEF",
+            "firstName": "John",
+            "lastName": "Doe",
+            "originalFarePoints": 20000
+        }
+    ]
+}
+```
+
+#### Original Taxes & Fees
+Default: None \
+Type: Number (reservation-only)
+
+The taxes/fees (in USD) you originally paid for this reservation, shown alongside `originalFarePoints` in the [Web UI](README.md#web-ui). Like `originalFarePoints`, this is display-only and does not affect fare checking.
+
+This option is only applicable to reservation configurations (not account configurations).
+
+```json
+{
+    "reservations": [
+        {
+            "confirmationNumber": "ABCDEF",
+            "firstName": "John",
+            "lastName": "Doe",
+            "originalFarePoints": 20000,
+            "originalTaxesFees": 11.20
+        }
+    ]
+}
+```
 
 ### Account and Reservation-specific configuration
 Setting specific configuration values for an account or reservation allows you to fully customize how you want them to be

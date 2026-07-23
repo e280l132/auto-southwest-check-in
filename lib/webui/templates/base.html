@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Auto Southwest Check-In{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="wordmark" href="{{ url_for('index') }}">
+                <span class="wordmark-mark">SW</span>
+                <span>
+                    <strong>Fare Watch</strong>
+                    <span class="wordmark-sub">Auto Southwest Check-In</span>
+                </span>
+            </a>
+            <div class="topbar-actions">
+                {% block topbar_actions %}{% endblock %}
+                <button id="reload-config-btn" class="btn btn-ghost btn-sm" type="button" title="Reload config.json so the check-in daemon picks up changes">
+                    Reload config
+                </button>
+            </div>
+        </div>
+    </header>
+    <p id="reload-status" class="status-text" role="status"></p>
+
+    <main>
+        {% if daemon_running %}
+        <p class="notice notice-daemon">
+            <strong>The check-in daemon is running.</strong>
+            It drives its own browser session, so starting a check here at the same time may trip
+            Southwest's rate limiting. Scheduled checks and fare emails continue either way.
+        </p>
+        {% endif %}
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flashes">
+                    {% for category, message in messages %}
+                        <p class="flash flash-{{ category }}">{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

@@ -14,6 +14,11 @@ Log into your account:
 
 Options:
     --test-notifications   Test the notification URLs configuration and exit
+    --web                  Start only the local web UI, without monitoring reservations. Open
+                           http://127.0.0.1:9000 (or --web-port) once started
+    --no-web               Disable the local web UI, which otherwise starts automatically
+                           alongside monitoring
+    --web-port PORT        Port for the web UI (default: 9000)
     --debug-screenshots    Take screenshots of the browser for debugging purposes. Screenshots
                            will be stored in the 'logs/' directory
     -v, --verbose          Display debug messages

@@ -30,6 +30,10 @@ class CheckInScheduler:
         self.flights = []
         self.checkin_handlers = []
 
+        # Set when _get_reservation_info fails, so callers (e.g. the web UI) can surface the
+        # actual Southwest error instead of just an empty flight list. Not used by the daemon.
+        self.last_fetch_error = None
+
     def process_reservations(self, confirmation_numbers: list[str]) -> None:
         """
         Flights from all confirmation numbers are retrieved. Then, any new
@@ -46,6 +50,13 @@ class CheckInScheduler:
         logger.debug("Refreshing headers for current session")
         webdriver = WebDriver(self)
         webdriver.set_headers()
+
+    def fetch_flights(self, confirmation_number: str) -> list[Flight]:
+        """
+        Retrieve a reservation's upcoming flights without scheduling any check-ins. Used by the
+        web UI to look up flight/fare details on demand without triggering CheckInHandler.
+        """
+        return self._get_flights(confirmation_number)
 
     def _get_flights(self, confirmation_number: str) -> list[Flight]:
         """Get all flights booked on a single reservation"""
@@ -79,6 +90,8 @@ class CheckInScheduler:
             logger.debug("Retrieving reservation information")
             response = make_request("POST", site, self.headers, info)
         except RequestError as err:
+            self.last_fetch_error = str(err)
+
             # Don't send a notification if flights have already been scheduled and all flights
             # from this reservation are old. This is how old flights are removed.
             if len(self.flights) == 0 or err.southwest_code != SouthwestErrorCode.FLIGHT_IN_PAST:
@@ -89,6 +102,7 @@ class CheckInScheduler:
 
             return {}
 
+        self.last_fetch_error = None
         logger.debug("Successfully retrieved reservation information")
         return response["viewReservationViewPage"]
 

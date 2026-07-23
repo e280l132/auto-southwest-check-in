@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -623,6 +624,36 @@ class TestReservationConfig:
                 "lastName": "last",
                 "companionFarePoints": 0,
             },
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "originalFarePoints": "invalid",
+            },
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "originalFarePoints": 0,
+            },
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "originalTaxesFees": "invalid",
+            },
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "originalTaxesFees": -1,
+            },
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "originalTaxesFees": True,
+            },
         ],
     )
     def test_parse_config_raises_exception_on_invalid_entries(self, config_content: JSON) -> None:
@@ -638,6 +669,8 @@ class TestReservationConfig:
             "lastName": "last",
             "check_fares": False,
             "companionFarePoints": 6000,
+            "originalFarePoints": 20000,
+            "originalTaxesFees": 11.20,
         }
         test_config._parse_config(reservation_config)
 
@@ -646,6 +679,8 @@ class TestReservationConfig:
         assert test_config.first_name == "first"
         assert test_config.last_name == "last"
         assert test_config.companion_fare_points == 6000
+        assert test_config.original_fare_points == 20000
+        assert test_config.original_taxes_fees == 11.20
 
     def test_parse_config_does_not_set_companion_fare_points_when_not_present(self) -> None:
         test_config = ReservationConfig()
@@ -654,6 +689,62 @@ class TestReservationConfig:
         )
 
         assert test_config.companion_fare_points is None
+
+    def test_parse_config_warns_about_unrecognized_keys(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        test_config = ReservationConfig()
+
+        with caplog.at_level(logging.WARNING, logger="lib.config"):
+            test_config._parse_config(
+                {
+                    "confirmationNumber": "num",
+                    "firstName": "first",
+                    "lastName": "last",
+                    # The real key is 'check_fares', so this silently has no effect
+                    "checkFares": "same_day_smart",
+                }
+            )
+
+        assert test_config.unknown_keys == ["checkFares"]
+        assert "checkFares" in caplog.text
+        assert "check_fares" in caplog.text
+
+    def test_parse_config_reports_no_unrecognized_keys_for_a_valid_reservation(self) -> None:
+        test_config = ReservationConfig()
+        test_config._parse_config(
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "check_fares": "same_day",
+                "originalFarePoints": 100,
+            }
+        )
+
+        assert test_config.unknown_keys == []
+
+    def test_parse_config_does_not_set_original_fare_fields_when_not_present(self) -> None:
+        test_config = ReservationConfig()
+        test_config._parse_config(
+            {"confirmationNumber": "num", "firstName": "first", "lastName": "last"}
+        )
+
+        assert test_config.original_fare_points is None
+        assert test_config.original_taxes_fees is None
+
+    def test_parse_config_accepts_integer_original_taxes_fees(self) -> None:
+        test_config = ReservationConfig()
+        test_config._parse_config(
+            {
+                "confirmationNumber": "num",
+                "firstName": "first",
+                "lastName": "last",
+                "originalTaxesFees": 0,
+            }
+        )
+
+        assert test_config.original_taxes_fees == 0
 
 
 class TestNotificationConfig:

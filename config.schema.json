@@ -61,7 +61,22 @@
                     "check_fares": { "$ref": "#/$defs/check_fares" },
                     "healthchecks_url": { "$ref": "#/$defs/healthchecks_url" },
                     "notifications": { "$ref": "#/$defs/notifications" },
-                    "retrieval_interval": { "$ref": "#/$defs/retrieval_interval" }
+                    "retrieval_interval": { "$ref": "#/$defs/retrieval_interval" },
+                    "companionFarePoints": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Points paid for a companion-pass fare, used to detect lower companion fares"
+                    },
+                    "originalFarePoints": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Points originally paid for this reservation, shown in the web UI alongside the current fare found"
+                    },
+                    "originalTaxesFees": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Taxes/fees (in USD) originally paid for this reservation, shown in the web UI"
+                    }
                 },
                 "required": ["confirmationNumber", "firstName", "lastName"],
                 "additionalProperties": false

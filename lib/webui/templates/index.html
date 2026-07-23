@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+
+{% block topbar_actions %}
+<div class="topbar-actions">
+    <a class="btn btn-secondary" href="{{ url_for('new_reservation') }}">Add flight</a>
+    <button id="check-all-btn" class="btn btn-primary" {% if not reservations %}disabled{% endif %}
+            data-daemon-running="{{ 'true' if daemon_running else 'false' }}">
+        Check all fares
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<section class="summary" aria-label="Summary">
+    <div class="stat">
+        <span class="stat-value">{{ summary.tracked_count }}</span>
+        <span class="stat-label">flights tracked</span>
+    </div>
+    <div class="stat {% if summary.cheaper_count %}stat-good{% endif %}">
+        <span class="stat-value">{{ summary.cheaper_count }}</span>
+        <span class="stat-label">with a cheaper option</span>
+    </div>
+    <div class="stat {% if summary.best_savings %}stat-good{% endif %}">
+        <span class="stat-value">
+            {% if summary.best_savings %}{{ "{:,}".format(summary.best_savings) }}{% else %}&mdash;{% endif %}
+        </span>
+        <span class="stat-label">biggest drop (pts)</span>
+    </div>
+    <div class="stat">
+        <span class="stat-value stat-value-sm" data-timestamp="{{ summary.last_checked or '' }}">
+            {% if summary.last_checked %}{{ summary.last_checked }}{% else %}never{% endif %}
+        </span>
+        <span class="stat-label">last checked</span>
+    </div>
+</section>
+
+<p id="check-all-status" class="status-text" role="status"></p>
+
+{% if summary.needs_paid_fare %}
+<p class="notice notice-hint">
+    {{ summary.needs_paid_fare }} flight{{ 's' if summary.needs_paid_fare != 1 }}
+    {{ 'have' if summary.needs_paid_fare != 1 else 'has' }} no recorded fare.
+    Southwest only reports a <em>difference</em> from what you paid, so add the points you paid to
+    see real prices instead of just deltas.
+</p>
+{% endif %}
+
+{% if not reservations %}
+<div class="empty-state">
+    <h2>No flights tracked yet</h2>
+    <p>Add a one-way reservation and its confirmation number to start watching its fare.</p>
+    <a class="btn btn-primary" href="{{ url_for('new_reservation') }}">Add your first flight</a>
+</div>
+{% endif %}
+
+<div class="cards">
+    {% for r in reservations %}
+    <article class="card" data-confirmation="{{ r.confirmation_number }}">
+
+        <header class="card-header">
+            <div class="card-heading">
+                <h2>{{ r.confirmation_number }}</h2>
+                <p class="passenger">{{ r.first_name }} {{ r.last_name }}</p>
+            </div>
+            <div class="card-badges">
+                <span class="badge badge-mode">{{ r.check_fares }}</span>
+                {% if r.is_companion_configured %}
+                    <span class="badge badge-companion">Companion</span>
+                {% endif %}
+            </div>
+            <div class="card-tools">
+                <button class="btn btn-primary btn-sm check-btn"
+                        data-confirmation="{{ r.confirmation_number }}"
+                        data-daemon-running="{{ 'true' if daemon_running else 'false' }}">
+                    Check fares
+                </button>
+                <a class="btn btn-ghost btn-sm"
+                   href="{{ url_for('edit_reservation', confirmation_number=r.confirmation_number) }}">Edit</a>
+            </div>
+        </header>
+
+        {% if r.unknown_keys %}
+        <div class="notice notice-warn">
+            <p>
+                Unrecognized setting{{ 's' if r.unknown_keys|length != 1 }} in config.json:
+                {% for key in r.unknown_keys %}<code>{{ key }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+                Ignored, so {{ 'they have' if r.unknown_keys|length != 1 else 'it has' }} no effect.
+            </p>
+            {% for bad, good in r.fixable_keys.items() %}
+            <form class="fix-key-form" method="post"
+                  action="{{ url_for('fix_reservation_key', confirmation_number=r.confirmation_number) }}">
+                <input type="hidden" name="key" value="{{ bad }}">
+                <button type="submit" class="btn btn-secondary btn-sm">
+                    Rename <code>{{ bad }}</code> &rarr; <code>{{ good }}</code>
+                </button>
+            </form>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <p class="status-text" id="status-{{ r.confirmation_number }}" role="status"></p>
+
+        {% if not r.last_check %}
+            <p class="muted no-check-yet">Not checked yet.</p>
+        {% elif r.last_check.error %}
+            <p class="checked-at" data-timestamp="{{ r.last_check.checked_at }}">Last checked: {{ r.last_check.checked_at }}</p>
+            <p class="notice notice-error">
+                {{ r.last_check.error }}
+                <a href="{{ url_for('edit_reservation', confirmation_number=r.confirmation_number) }}">Check the name and confirmation number</a>
+            </p>
+        {% elif not r.last_check.flights %}
+            <p class="muted">No upcoming flights found for this reservation.</p>
+        {% else %}
+            <p class="checked-at" data-timestamp="{{ r.last_check.checked_at }}">Last checked: {{ r.last_check.checked_at }}</p>
+
+            {% if r.last_check.flights|length > 1 %}
+            <p class="notice notice-hint">
+                This reservation has more than one flight. The recorded fare is stored per
+                reservation, so it is shown against each one.
+            </p>
+            {% endif %}
+
+            {% for f in r.last_check.flights %}
+            <section class="flight">
+                <div class="flight-head">
+                    <h3>{{ f.route }}</h3>
+                    <span class="muted">Flight {{ f.flight_number }} &middot; {{ f.local_departure_date }}</span>
+                    {% if f.fare_type %}<span class="badge badge-fare">{{ f.fare_type }}</span>{% endif %}
+                    {% if f.is_companion %}<span class="badge badge-companion">companion</span>{% endif %}
+                    <span class="badge badge-status-{{ f.status }}">{{ f.status.replace('_', ' ') }}</span>
+                </div>
+
+                <div class="stat-row">
+                    <div class="stat-cell">
+                        <span class="stat-cell-label">You paid</span>
+                        <span class="stat-cell-value">
+                            {% if f.paid_points is not none %}
+                                {{ "{:,}".format(f.paid_points) }} pts
+                            {% else %}
+                                <span class="muted">not recorded</span>
+                            {% endif %}
+                        </span>
+                        {% if f.paid_taxes_fees is not none %}
+                        <span class="stat-cell-note">+ ${{ "%.2f"|format(f.paid_taxes_fees) }} taxes</span>
+                        {% endif %}
+                    </div>
+                    <div class="stat-cell">
+                        <span class="stat-cell-label">Today</span>
+                        <span class="stat-cell-value">
+                            {% if f.current_fare_points is not none %}
+                                {{ "{:,}".format(f.current_fare_points) }} pts
+                            {% else %}
+                                <span class="muted">&mdash;</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="stat-cell">
+                        <span class="stat-cell-label">vs. paid</span>
+                        <span class="stat-cell-value">
+                            {% if f.difference_amount is none %}
+                                <span class="muted">&mdash;</span>
+                            {% elif f.difference_amount == 0 %}
+                                <span class="muted">no change</span>
+                            {% else %}
+                                <span class="{{ 'price-down' if f.difference_amount < 0 else 'price-up' }}">
+                                    {{ "{:+,}".format(f.difference_amount) }} {{ f.savings_currency }}
+                                </span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+
+                <details class="paid-editor">
+                    <summary>
+                        {% if f.paid_points is none %}Record what you paid{% else %}Update what you paid{% endif %}
+                    </summary>
+                    <form method="post"
+                          action="{{ url_for('update_paid_fare', confirmation_number=r.confirmation_number) }}">
+                        <label>
+                            Points paid
+                            <input type="number" name="originalFarePoints" min="1"
+                                   value="{{ r.original_fare_points if r.original_fare_points is not none else '' }}"
+                                   placeholder="e.g. 18500">
+                        </label>
+                        <label>
+                            Taxes &amp; fees (USD)
+                            <input type="number" name="originalTaxesFees" min="0" step="0.01"
+                                   value="{{ r.original_taxes_fees if r.original_taxes_fees is not none else '' }}"
+                                   placeholder="e.g. 5.60">
+                        </label>
+                        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                        <span class="hint">Leave blank to clear. Stored in config.json.</span>
+                    </form>
+                </details>
+
+                {% if f.message %}<p class="muted flight-message">{{ f.message }}</p>{% endif %}
+
+                {% if f.board %}
+                <div class="table-scroll">
+                    <table class="flights-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Flight</th>
+                                <th scope="col">Depart</th>
+                                <th scope="col">Stops</th>
+                                <th scope="col" class="num">Price</th>
+                                <th scope="col" class="num">vs. paid</th>
+                                <th scope="col"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in f.board %}
+                            <tr class="{% if row.is_current %}row-current{% elif row.is_cheaper %}row-cheaper{% endif %}">
+                                <td class="flight-cell">{{ row.flight_number }}</td>
+                                <td>{{ row.departure_time }}</td>
+                                <td>{{ row.stop_description }}</td>
+                                <td class="num">
+                                    {% if row.unavailable %}
+                                        <span class="muted">not available</span>
+                                    {% elif row.points is not none %}
+                                        {{ "{:,}".format(row.points) }}
+                                    {% else %}
+                                        <span class="muted">&mdash;</span>
+                                    {% endif %}
+                                </td>
+                                <td class="num">
+                                    {% if row.difference is none %}
+                                        <span class="muted">&mdash;</span>
+                                    {% elif row.difference == 0 %}
+                                        <span class="muted">&mdash;</span>
+                                    {% else %}
+                                        <span class="{{ 'price-down' if row.difference < 0 else 'price-up' }}">
+                                            {{ "{:+,}".format(row.difference) }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.is_current %}
+                                        <span class="tag tag-current">your flight</span>
+                                    {% elif row.is_cheaper %}
+                                        <span class="tag tag-cheaper">cheaper</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </section>
+            {% endfor %}
+        {% endif %}
+    </article>
+    {% endfor %}
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

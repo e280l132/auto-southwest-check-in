@@ -8,6 +8,23 @@ If there is no "Upgrading" header for that version, no post-upgrade actions need
 - Official support for Python 3.14
     - Support for Python 3.9 has been dropped
     - The Docker image also now uses Python 3.14
+- Local web UI for viewing tracked reservations and triggering fare checks, now starting
+automatically alongside the check-in daemon on every run (use `--no-web` to disable it, or `--web`
+to run only the UI)
+    - New reservation options `originalFarePoints` and `originalTaxesFees` let the web UI show the
+    original amount paid alongside the current fare found
+    - Fare checks show a board of every same-day flight with its price and difference, rather than
+    only the flights that happen to be cheaper
+    - Reservations can be added, edited, and removed from the browser, including an inline editor
+    for the fare you paid. Only the `reservations` section of `config.json` is read or written;
+    `accounts`, `notifications`, and unrecognized keys are left untouched
+    - Warns when the check-in daemon is already running, since both drive their own browser session
+    - "Reload config" button restarts the check-in daemon's monitoring processes (without
+    restarting the web UI itself) so config changes made in the UI are picked up immediately
+    - Fare-check results no longer persist across page loads: only the page load right after a
+    check shows its result, so a manual refresh always starts clean
+- Unrecognized settings in a reservation (e.g. `checkFares` instead of `check_fares`) are now
+logged with a suggested correction instead of being silently ignored
 
 ### Bug Fixes
 - Always use first name (instead of preferred name) for scheduling flights and check-ins

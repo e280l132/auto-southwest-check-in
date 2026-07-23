@@ -67,6 +67,20 @@ class Flight:
         date_format = f"%Y-%m-%d {time_format} %Z"
         return datetime.strftime(self._local_departure_time, date_format)
 
+    def get_safe_display_fields(self) -> tuple[str, str]:
+        """
+        Return (local_departure_date, display_time), falling back to empty strings if the local
+        departure time was never set.
+
+        Both are supplementary display values, so callers on paths that must not fail — notably
+        the fare-check error handlers, where raising would replace the original error and take
+        down the monitoring process — should use this instead of the properties directly.
+        """
+        try:
+            return self.local_departure_date, self.get_display_time(True)
+        except (AttributeError, TypeError):
+            return "", ""
+
     def _set_flight_time(self, flight: JSON) -> None:
         flight_date = f"{flight['departureDate']} {flight['departureTime']}"
         departure_airport_code = flight["departureAirport"]["code"]

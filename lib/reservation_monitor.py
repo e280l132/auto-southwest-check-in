@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from .config import AccountConfig, ReservationConfig
+    from .fare_check_result import FareCheckResult
+    from .flight import Flight
 
 TOO_MANY_REQUESTS_CODE = 429
 INTERNAL_SERVER_ERROR_CODE = 500
@@ -123,14 +125,23 @@ class ReservationMonitor:
             return
 
         flights = self.checkin_scheduler.flights
+        self.check_fares_for_flights(flights)
+
+    def check_fares_for_flights(self, flights: list[Flight]) -> list[FareCheckResult]:
+        """
+        Check fares for the given flights, reusing the same error handling and Healthchecks
+        pings as the scheduled daemon check. Shared by both the daemon loop (_check_flight_fares)
+        and the web UI so both go through identical fare-check logic.
+        """
         logger.debug("Checking fares for %d flights", len(flights))
 
         fare_checker = FareChecker(self)
+        results = []
         for flight in flights:
             # If a fare check fails, don't completely exit. Just print the error
             # and continue
             try:
-                fare_checker.check_flight_price(flight)
+                results.append(fare_checker.check_flight_price(flight))
                 self.notification_handler.healthchecks_success(
                     f"Successful fare check,\nconfirmation number = {flight.confirmation_number}"
                 )
@@ -139,6 +150,7 @@ class ReservationMonitor:
                 self.notification_handler.healthchecks_fail(
                     f"Failed fare check,\nconfirmation number = {flight.confirmation_number}"
                 )
+                results.append(self._make_error_result(flight, str(err)))
             except FlightChangeError as err:
                 logger.info(
                     "Skipping fare check for flight %s: %s", flight.confirmation_number, err
@@ -146,11 +158,49 @@ class ReservationMonitor:
                 self.notification_handler.healthchecks_success(
                     f"Successful fare check,\nconfirmation number = {flight.confirmation_number}"
                 )
+                results.append(self._make_skipped_result(flight, str(err)))
             except Exception as err:
                 logger.exception("Unexpected error during fare check: %s", repr(err))
                 self.notification_handler.healthchecks_fail(
                     f"Failed fare check,\nconfirmation number = {flight.confirmation_number}"
                 )
+                results.append(self._make_error_result(flight, str(err)))
+
+        return results
+
+    def _make_error_result(
+        self, flight: Flight, message: str, status: str = "error"
+    ) -> FareCheckResult:
+        """
+        Build a result describing a failed or skipped fare check.
+
+        This runs inside the exception handlers of check_fares_for_flights, so it must not be able
+        to raise under any circumstances: an exception here would replace the original error and
+        propagate out through _check() and _monitor(), ending this reservation's monitoring
+        entirely. Every field is therefore read defensively — the result is only ever used for
+        display, so degraded values beat taking the monitor down.
+        """
+        from .fare_check_result import FareCheckResult  # noqa: PLC0415 (avoids circular import)
+
+        try:
+            local_departure_date, display_time = flight.get_safe_display_fields()
+        except Exception:
+            local_departure_date, display_time = "", ""
+
+        return FareCheckResult(
+            confirmation_number=getattr(flight, "confirmation_number", ""),
+            flight_number=getattr(flight, "flight_number", ""),
+            departure_airport_code=getattr(flight, "departure_airport_code", ""),
+            destination_airport_code=getattr(flight, "destination_airport_code", ""),
+            local_departure_date=local_departure_date,
+            display_time=display_time,
+            is_companion=False,
+            status=status,
+            message=message,
+        )
+
+    def _make_skipped_result(self, flight: Flight, message: str) -> FareCheckResult:
+        return self._make_error_result(flight, message, status="skipped")
 
     def _smart_sleep(self, previous_time: datetime) -> None:
         """

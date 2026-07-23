@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+from difflib import get_close_matches
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from .log import get_logger
@@ -25,6 +27,26 @@ class ConfigError(Exception):
 
 
 class Config:
+    # Keys understood by _parse_config. Anything else in a config entry is ignored silently by
+    # design (so hand-added keys survive), which makes typos like 'checkFares' invisible — hence
+    # the warning in _warn_unknown_keys.
+    RECOGNIZED_KEYS = frozenset(
+        {
+            "check_fares",
+            "healthchecks_url",
+            "retrieval_interval",
+            "ignoreServerPort",
+            "ignoreServerBaseUrl",
+            "ignoreServerToken",
+            "notifications",
+        }
+    )
+
+    # Known, unambiguous typos mapped to the key they should be. Unlike the fuzzy "Did you mean"
+    # hint in _warn_unknown_keys (which is just text), these are safe to rename automatically —
+    # the web UI offers a one-click fix for any unknown key that appears here.
+    KEY_CORRECTIONS = MappingProxyType({"checkFares": "check_fares"})
+
     def __init__(self) -> None:
         # Default values are set
         self.browser_path = None
@@ -58,6 +80,34 @@ class Config:
 
         if global_config is not None:
             self.merge_notification_config(global_config)
+
+    def parse(self, config_json: JSON) -> None:
+        """
+        Parse and validate a config dictionary, raising ConfigError on invalid values.
+
+        Unlike create(), no global configuration is merged in, which makes this suitable for
+        validating a single entry (e.g. a reservation submitted from the web UI) on its own.
+        """
+        self._parse_config(config_json)
+
+    def _warn_unknown_keys(self, config: JSON, entry_description: str) -> list[str]:
+        """
+        Warn about keys that _parse_config doesn't understand, suggesting a close match when there
+        is one. Unknown keys are never an error — they are preserved and ignored — but silently
+        ignoring a misspelled setting means it never takes effect, which is worth flagging.
+
+        Returns the unknown keys so callers (e.g. the web UI) can surface them too.
+        """
+        unknown_keys = sorted(set(config) - self.RECOGNIZED_KEYS)
+
+        for key in unknown_keys:
+            suggestions = get_close_matches(key, self.RECOGNIZED_KEYS, n=1, cutoff=0.7)
+            hint = f" Did you mean '{suggestions[0]}'?" if suggestions else ""
+            logger.warning(
+                "Ignoring unrecognized setting '%s' in %s.%s", key, entry_description, hint
+            )
+
+        return unknown_keys
 
     def _merge_globals(self, global_config: GlobalConfig) -> None:
         """
@@ -187,13 +237,27 @@ class GlobalConfig(Config):
         self.accounts = []
         self.reservations = []
 
+    @property
+    def config_file_path(self) -> Path:
+        """The configuration file this config was read from."""
+        return self._get_config_file_path()
+
+    def initialize_or_raise(self) -> None:
+        """
+        Read and parse the configuration, raising ConfigError or JSONDecodeError on bad input.
+
+        initialize() prints the error and exits, which is right for the CLI but fatal inside a
+        long-running process such as the web UI.
+        """
+        config = self._read_config()
+        config = self._read_env_vars(config)
+        self._parse_config(config)
+
     def initialize(self) -> None:
         logger.debug("Initializing configuration file")
 
         try:
-            config = self._read_config()
-            config = self._read_env_vars(config)
-            self._parse_config(config)
+            self.initialize_or_raise()
         except (ConfigError, json.decoder.JSONDecodeError) as err:
             print("Error in configuration file:")
             print(err)
@@ -392,12 +456,24 @@ class AccountConfig(Config):
 
 
 class ReservationConfig(Config):
+    RECOGNIZED_KEYS = Config.RECOGNIZED_KEYS | {
+        "confirmationNumber",
+        "firstName",
+        "lastName",
+        "companionFarePoints",
+        "originalFarePoints",
+        "originalTaxesFees",
+    }
+
     def __init__(self) -> None:
         super().__init__()
         self.confirmation_number = None
         self.first_name = None
         self.last_name = None
         self.companion_fare_points = None
+        self.original_fare_points = None
+        self.original_taxes_fees = None
+        self.unknown_keys = []
 
     def _parse_config(self, config: JSON) -> None:
         super()._parse_config(config)
@@ -422,6 +498,30 @@ class ReservationConfig(Config):
                 raise ConfigError("'companionFarePoints' must be a positive integer")
             self.companion_fare_points = companion_fare_points
             logger.debug("Setting companion fare points to %d", companion_fare_points)
+
+        if "originalFarePoints" in config:
+            original_fare_points = config["originalFarePoints"]
+            if not isinstance(original_fare_points, int):
+                raise ConfigError("'originalFarePoints' must be an integer")
+            if original_fare_points <= 0:
+                raise ConfigError("'originalFarePoints' must be a positive integer")
+            self.original_fare_points = original_fare_points
+            logger.debug("Setting original fare points to %d", original_fare_points)
+
+        if "originalTaxesFees" in config:
+            original_taxes_fees = config["originalTaxesFees"]
+            if not isinstance(original_taxes_fees, (int, float)) or isinstance(
+                original_taxes_fees, bool
+            ):
+                raise ConfigError("'originalTaxesFees' must be a number")
+            if original_taxes_fees < 0:
+                raise ConfigError("'originalTaxesFees' must not be negative")
+            self.original_taxes_fees = original_taxes_fees
+            logger.debug("Setting original taxes/fees to %s", original_taxes_fees)
+
+        self.unknown_keys = self._warn_unknown_keys(
+            config, f"reservation {self.confirmation_number}"
+        )
 
 
 class NotificationConfig(Config):

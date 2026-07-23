@@ -7,6 +7,8 @@
 # Program files
 config.json
 ignored_flights.json
+webui_last_results.json
+daemon.pid
 .coverage
 logs/
 Pipfile

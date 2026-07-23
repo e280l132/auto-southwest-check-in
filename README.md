@@ -20,6 +20,7 @@ information beforehand.
     * [Prerequisites](#prerequisites)
     * [Upgrading](#upgrading)
 - [Using the Script](#using-the-script)
+    * [Web UI](#web-ui)
     * [Running in Docker](#running-in-docker)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -79,6 +80,102 @@ python3 southwest.py --help
 If you want the latest features of the script, you can use the `develop` branch (documented changes
 can be viewed in the Changelog). However, keep in mind that changes to this branch do not ensure reliability.
 
+### Web UI
+Alongside scheduling check-ins, you can browse and manually trigger fare checks for reservations
+already configured in `config.json` (see [Configuration](#configuration)) using a local web UI.
+
+The web UI now starts automatically every time the script runs — no separate command needed:
+```shell
+python3 southwest.py CONFIRMATION_NUMBER FIRST_NAME LAST_NAME
+```
+Then open <http://127.0.0.1:9000> in your browser. Use `--web-port PORT` (or the
+`AUTO_SOUTHWEST_CHECK_IN_WEB_PORT` environment variable) to use a different port, and
+`AUTO_SOUTHWEST_CHECK_IN_WEB_HOST` to bind to a different host.
+
+- Pass `--no-web` to disable the web UI entirely and only run the check-in daemon.
+- Pass `--web` to run *only* the web UI, without starting any monitoring — useful for reviewing or
+  editing `config.json` without also driving a browser session.
+
+The main page lists every reservation configured under `reservations` in `config.json`, showing:
+- Route, flight number(s), and date
+- The original fare paid (points and taxes/fees), if configured — see
+  [Original Fare Points](CONFIGURATION.md#original-fare-points) and
+  [Original Taxes & Fees](CONFIGURATION.md#original-taxes--fees)
+- Whether a companion pass is attached to the reservation
+- The result of the last fare check
+
+#### The flight board
+After a check, each flight shows a board of **every** same-day flight on that route, not just the
+cheaper ones, so you can see the whole day at a glance:
+
+```
+Flight  Depart  Stops    Price          vs. paid
+1102    6:00a   Nonstop  16,000 pts    -2,500 PTS   cheaper
+3792    9:15a   Nonstop  18,500 pts        —        your flight
+2287    2:40p   1 Stop   21,000 pts    +2,500 PTS
+4431    7:20p   Nonstop  not available     —
+```
+
+`vs. paid` is expressed the same way Southwest and the notifications do it: **negative means
+cheaper** than what you paid. Flights where your booked fare class isn't sold show as
+"not available" rather than being hidden.
+
+Absolute prices work differently depending on the reservation:
+- **Companion-pass** reservations are priced through Southwest's public search, which returns real
+  prices, so the Price column is always populated.
+- **Everything else** goes through the change-shopping API, which only ever reports a *difference*
+  from what you paid — Southwest never discloses the original amount. Set
+  [`originalFarePoints`](CONFIGURATION.md#original-fare-points) (the edit form makes this easy) and
+  the UI can then show absolute prices; without it you still get every difference.
+
+#### Running checks
+Each reservation has a "Check Fares" button, and there is a "Check All" button at the top of the
+page. Both run the exact same fare-check logic the scheduled daemon uses (including the companion
+fare fallback and `same_day_smart` alternate-flight search), so any notifications you have
+configured will still fire as usual. Checks drive a real browser session and typically take
+30-90 seconds; only one check runs at a time, and the page polls until it's done and then reloads
+to show the result. Errors (e.g. a webdriver timeout, or Southwest rejecting a passenger name) are
+shown in the UI rather than failing silently.
+
+Results aren't kept around: the page you land on right after a check shows that result, but
+loading `/` again afterward (a manual refresh, reopening the tab, editing a reservation) clears
+it. Nothing is shown until you run another check.
+
+#### Adding and editing flights
+"Add flight" and the per-flight "Edit" link write directly to the `reservations` section of
+`config.json`, covering the confirmation number, passenger name, fare-checking mode, and the
+paid-fare fields. Each flight block also has an inline **"Record what you paid"** control, so you
+can fill in the points without leaving the board. Removing a flight also clears its cached results
+and ignore entries.
+
+Edits are validated with the same rules the CLI uses and take effect in the web UI immediately.
+Some caveats:
+- Reservations are assumed to be **one-way**, so one paid fare per reservation is one paid fare per
+  flight.
+- A separately running check-in daemon keeps its old configuration until it is **restarted**.
+- Only the `reservations` section is ever read or written. Your `accounts` and `notifications`
+  blocks are preserved untouched and are never displayed in the UI, since they hold credentials
+  and notification URLs. Keys the script doesn't recognize are preserved too — and flagged, so a
+  typo like `checkFares` (the real key is `check_fares`) doesn't silently do nothing.
+
+#### Running alongside the daemon
+Since the web UI and the check-in daemon run in the same process by default, the UI shows a
+banner and asks for confirmation before starting a manual check. Both drive their own browser
+session, and running two at once against Southwest is a good way to get rate limited. Scheduled
+checks and fare emails are unaffected either way.
+
+#### Reloading to apply changes
+Editing `reservations` in `config.json` (via the UI or by hand) takes effect for the web UI
+immediately, but the check-in daemon keeps its original configuration until it reloads. The
+**"Reload config"** button in the top bar does this for you: it stops any in-progress check-ins
+gracefully, then starts fresh monitoring processes from the latest `config.json`. The web UI
+itself is never interrupted — only the daemon's monitoring processes restart.
+
+**Note**: The web UI has no authentication and is intended for local/trusted-network use only —
+by default it only binds to `127.0.0.1` (or `0.0.0.0` inside Docker, since the container network
+is already isolated unless you publish the port). Anyone who can reach it can read your
+reservations, edit your configuration, and trigger a reload.
+
 ### Running in Docker
 The application can also be run in a container using [Docker]. The Docker repository for this project
 can be found [here][Docker repository]. To pull the latest image, run:
@@ -101,6 +198,10 @@ Additional arguments for the script can be passed in after the image name.
 You can optionally attach a configuration file to the container by adding the
 `--volume /full-path/to/config.json:/app/config.json` flag before the image name.
 
+The [web UI](#web-ui) starts automatically inside the container too, bound to `0.0.0.0:9000`.
+Publish the port (`-p 9000:9000`) to reach it from the host, or pass `--no-web` as an additional
+argument to disable it.
+
 **Note**: The recommended restart policy for the container is `on-failure` or `no`
 
 #### Docker Compose Example Using Config
@@ -110,6 +211,8 @@ services:
     image: jdholtz/auto-southwest-check-in
     container_name: auto-southwest
     restart: on-failure
+    ports:
+      - "9000:9000"
     volumes:
       - /full-path/to/config.json:/app/config.json
 ```

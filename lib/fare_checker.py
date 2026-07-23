@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from .fare_check_result import FareCheckResult
 from .log import get_logger
 from .utils import (
     CheckFaresOption,
@@ -32,7 +33,7 @@ class FareChecker:
         self.headers = reservation_monitor.checkin_scheduler.headers
         self.filter = get_fare_check_filter(self.reservation_monitor.config.check_fares)
 
-    def check_flight_price(self, flight: Flight) -> None:
+    def check_flight_price(self, flight: Flight) -> FareCheckResult:
         """
         Check if the price amount is negative (in either points or USD).
         If it is, send a notification to the user about the lower fare.
@@ -43,8 +44,7 @@ class FareChecker:
         logger.debug("Checking current price for flight")
 
         if self.reservation_monitor.config.check_fares == CheckFaresOption.SAME_DAY_SMART:
-            self._check_all_alternate_fares(flight)
-            return
+            return self._check_all_alternate_fares(flight)
 
         try:
             flight_price = self._get_flight_price(flight)
@@ -53,10 +53,8 @@ class FareChecker:
                 companion_fare_points = getattr(
                     self.reservation_monitor.config, "companion_fare_points", None
                 )
-                self._check_companion_fare_via_webdriver(flight, companion_fare_points)
-            else:
-                raise err
-            return
+                return self._check_companion_fare_via_webdriver(flight, companion_fare_points)
+            raise err
 
         price_info = f"{flight_price['amount']:+,} {flight_price['currencyCode']}"
         logger.debug("Flight price change found for %s", price_info)
@@ -68,17 +66,59 @@ class FareChecker:
         if flight_price["amount"] < -1:
             # Lower fare!
             self.reservation_monitor.notification_handler.lower_fare(flight, price_info)
+            status = "lower_fare"
         else:
             logger.info(
                 "Fare check for flight %s: %s (no lower fare found)",
                 flight.confirmation_number,
                 price_info,
             )
+            status = "no_lower_fare"
+
+        # Give the non-smart modes a single-entry board for the current flight so the UI renders
+        # the same table shape regardless of which check_fares mode produced the result.
+        current_entry = self._board_entry(
+            flight_numbers=flight.flight_number,
+            display_number=flight.flight_number.replace("​", ""),
+            departure_time=flight.get_safe_display_fields()[1],
+            stop_description="Nonstop" if self._is_nonstop(flight) else "",
+            is_current=True,
+            is_nonstop=self._is_nonstop(flight),
+            points=None,
+            fare=flight_price,
+        )
+
+        return self._make_result(
+            flight,
+            status=status,
+            message=price_info,
+            currency_code=flight_price["currencyCode"],
+            difference_amount=flight_price["amount"],
+            board=[current_entry],
+        )
+
+    def _make_result(
+        self, flight: Flight, *, status: str, message: str = "", **kwargs: Any
+    ) -> FareCheckResult:
+        """Build a FareCheckResult carrying the flight's identifying details."""
+        local_departure_date, display_time = flight.get_safe_display_fields()
+
+        return FareCheckResult(
+            confirmation_number=flight.confirmation_number,
+            flight_number=flight.flight_number,
+            departure_airport_code=flight.departure_airport_code,
+            destination_airport_code=flight.destination_airport_code,
+            local_departure_date=local_departure_date,
+            display_time=display_time,
+            is_companion=self._is_companion_flight(flight),
+            status=status,
+            message=message,
+            **kwargs,
+        )
 
     def _is_companion_flight(self, flight: Flight) -> bool:
         """Return True if the reservation has a companion pass attached."""
-        grey_box = flight.reservation_info.get("greyBoxMessage") or {}
-        return "companion" in (grey_box.get("body") or "").lower()
+        return is_companion_flight(flight)
 
     def _is_reaccommodated(self, flight: Flight) -> bool:
         """Return True if the flight is reaccommodated (can be changed for free)."""
@@ -101,36 +141,178 @@ class FareChecker:
           savings (amount/currencyCode)
         Sorted by savings amount ascending (biggest savings first).
         """
+        board, _fare_type = self._get_change_board(flight)
+        return self._cheaper_from_board(board, flight)
+
+    def _get_change_board(self, flight: Flight) -> tuple[list[JSON], str]:
+        """Fetch the same-day flights from the change-shopping API and normalize them."""
         flights, fare_type = self._get_matching_flights(flight)
+        return self._build_change_board(flights, fare_type, flight), fare_type
 
-        # Smart filter: match nonstop preference to the current flight's stop type
-        if self._is_nonstop(flight):
-            passes_filter = lambda card: card.get("stopDescription") == "Nonstop"  # noqa: E731
-        else:
-            passes_filter = lambda _card: True  # noqa: E731
+    def _cheaper_from_board(self, board: list[JSON], flight: Flight) -> list[JSON]:
+        """
+        Narrow a same-day board down to the cheaper alternatives that drive notifications and
+        ignore links, applying the nonstop smart filter based on the current flight's stop type:
+          - Nonstop current flight \u2192 only nonstop alternatives are considered
+          - Connecting current flight \u2192 any alternative (nonstop or connecting) is considered
+        """
+        nonstop_only = self._is_nonstop(flight)
 
-        cheaper = []
-        for card in flights:
-            if not passes_filter(card):
-                continue
-            fare = self._get_matching_fare(card["fares"], fare_type)
-            if fare is None or fare["amount"] >= -1:
-                # No fare available or false-positive -1 USD difference
-                continue
-            cheaper.append(
-                {
-                    "flightNumbers": card.get("flightNumbers", ""),
-                    "displayNumber": card.get("flightNumbers", "").replace("\u200b", ""),
-                    "departureTime": card.get("departureTime", ""),
-                    "stopDescription": card.get("stopDescription", ""),
-                    "savings": fare,
-                }
-            )
+        cheaper = [
+            {
+                "flightNumbers": entry["flightNumbers"],
+                "displayNumber": entry["displayNumber"],
+                "departureTime": entry["departureTime"],
+                "stopDescription": entry["stopDescription"],
+                "savings": {
+                    "amount": entry["difference"],
+                    "currencyCode": entry["currencyCode"],
+                },
+            }
+            for entry in board
+            if entry["isCheaper"] and (entry["isNonstop"] or not nonstop_only)
+        ]
 
         cheaper.sort(key=lambda x: x["savings"]["amount"])
         return cheaper
 
-    def _check_all_alternate_fares(self, flight: Flight) -> None:
+    def _build_change_board(self, cards: list[JSON], fare_type: str, flight: Flight) -> list[JSON]:
+        """
+        Normalize every same-day flight from the change-shopping API into board entries, whether
+        or not it is cheaper. See _board_entry for the entry shape.
+
+        This API reports a price *difference* relative to what was paid, never an absolute price,
+        so 'points' is left as None.
+        """
+        board = [
+            self._board_entry(
+                flight_numbers=card.get("flightNumbers", ""),
+                display_number=card.get("flightNumbers", "").replace("\u200b", ""),
+                departure_time=card.get("departureTime", ""),
+                stop_description=card.get("stopDescription", ""),
+                is_current=card.get("flightNumbers", "") == flight.flight_number,
+                is_nonstop=card.get("stopDescription") == "Nonstop",
+                points=None,
+                fare=self._get_matching_fare(card.get("fares") or [], fare_type),
+            )
+            for card in cards
+        ]
+
+        board.sort(key=lambda entry: entry["departureTime"])
+        return board
+
+    def _build_public_board(
+        self, cards: list[JSON], fare_type: str, flight: Flight, paid_points: int | None
+    ) -> list[JSON]:
+        """
+        Normalize every same-day flight from the public search API into board entries, whether or
+        not it is cheaper. See _board_entry for the entry shape.
+
+        This API reports absolute points prices, so 'points' is always populated and the
+        difference is derived against what was paid (when that is known).
+        """
+        board = []
+        for card in cards:
+            card_numbers = card.get("flightNumbers") or []
+            points = self._get_card_points(card, fare_type)
+
+            fare = None
+            if points is not None and paid_points is not None:
+                fare = {"amount": points - paid_points, "currencyCode": "PTS"}
+
+            board.append(
+                self._board_entry(
+                    flight_numbers="\u200b/\u200b".join(card_numbers),
+                    display_number="/".join(card_numbers),
+                    departure_time=self._get_card_departure_time(card),
+                    stop_description=self._get_card_stop_description(card),
+                    is_current="\u200b/\u200b".join(card_numbers) == flight.flight_number,
+                    is_nonstop="NONSTOP" in card.get("filterTags", []),
+                    points=points,
+                    fare=fare,
+                )
+            )
+
+        board.sort(key=lambda entry: entry["departureTime"])
+        return board
+
+    def _board_entry(
+        self,
+        *,
+        flight_numbers: str,
+        display_number: str,
+        departure_time: str,
+        stop_description: str,
+        is_current: bool,
+        is_nonstop: bool,
+        points: int | None,
+        fare: JSON | None,
+    ) -> JSON:
+        """
+        Build one normalized same-day board entry, shared by the change-shopping and public search
+        paths so the UI has a single shape to render.
+
+        'unavailable' marks flights where the booked fare type isn't sold; those are surfaced as
+        such rather than dropped. 'isCheaper' applies the same false-positive -1 rule used
+        elsewhere (see https://github.com/jdholtz/auto-southwest-check-in/discussions/102).
+        """
+        difference = fare["amount"] if fare else None
+
+        return {
+            "flightNumbers": flight_numbers,
+            "displayNumber": display_number,
+            "departureTime": departure_time,
+            "stopDescription": stop_description,
+            "isCurrent": is_current,
+            "isNonstop": is_nonstop,
+            "points": points,
+            "difference": difference,
+            "currencyCode": fare["currencyCode"] if fare else None,
+            "unavailable": difference is None and points is None,
+            "isCheaper": difference is not None and difference < -1,
+        }
+
+    def _get_card_points(self, card: JSON, fare_type: str) -> int | None:
+        """Extract the absolute points price for a fare type from a public search card."""
+        try:
+            total_fare = card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]
+        except (KeyError, TypeError):
+            return None
+
+        if total_fare.get("currencyCode") != "POINTS":
+            return None
+
+        try:
+            return int(str(total_fare.get("value", "")).replace(",", ""))
+        except (ValueError, TypeError):
+            return None
+
+    def _get_card_departure_time(self, card: JSON) -> str:
+        """Public search reports either departureTime or a full departureDateTime."""
+        departure_time = card.get("departureTime") or card.get("departureDateTime", "")
+        if "T" in departure_time:
+            departure_time = departure_time.split("T")[1][:5]
+        return departure_time
+
+    def _get_card_stop_description(self, card: JSON) -> str:
+        """
+        Build a human-readable stop description for a public search card.
+
+        Unlike the change-shopping API, public search cards have no 'stopDescription' field.
+        Each entry in 'segments' is one marketing flight leg, so the number of connections is
+        len(segments) - 1, and the layover airport is the first segment's destination.
+        """
+        segments = card.get("segments") or []
+        stops = len(segments) - 1
+
+        if stops <= 0:
+            return "Nonstop"
+
+        connecting_airport = segments[0].get("destinationAirportCode", "")
+        label = f"{stops} Stop" + ("s" if stops != 1 else "")
+        return f"{label}, {connecting_airport}" if connecting_airport else label
+
+    def _check_all_alternate_fares(self, flight: Flight) -> FareCheckResult:
         """
         same_day_smart entry point: find ALL cheaper same-day alternatives, filter out ignored
         flights, and send a single digest notification if any visible alternatives remain.
@@ -145,22 +327,28 @@ class FareChecker:
             logger.info(
                 "All alternate fares for flight %s on %s are ignored — skipping", conf, flight_date
             )
-            return
+            return self._make_result(
+                flight, status="skipped", message="All alternate fares for this day are ignored"
+            )
 
         try:
-            alternatives = self._get_all_cheaper_flights(flight)
+            board, fare_type = self._get_change_board(flight)
+            alternatives = self._cheaper_from_board(board, flight)
         except FlightChangeError as err:
             if self._is_companion_flight(flight) and not self._is_reaccommodated(flight):
                 companion_fare_points = getattr(
                     self.reservation_monitor.config, "companion_fare_points", None
                 )
-                self._check_companion_fare_via_webdriver(flight, companion_fare_points)
-            else:
-                logger.info("Skipping alternate fare check for flight %s: %s", conf, err)
-            return
+                return self._check_companion_fare_via_webdriver(flight, companion_fare_points)
+            logger.info("Skipping alternate fare check for flight %s: %s", conf, err)
+            return self._make_result(flight, status="skipped", message=str(err))
         except Exception as err:
             logger.error("Error checking alternate fares for flight %s: %s", conf, err)
-            return
+            return self._make_result(flight, status="error", message=str(err))
+
+        # The full board is carried on every result below so the UI can show all same-day
+        # flights, not just the cheaper subset that drives notifications.
+        board_fields = self._board_result_fields(board, fare_type)
 
         visible = [
             a
@@ -175,7 +363,12 @@ class FareChecker:
                 conf,
                 flight_date,
             )
-            return
+            return self._make_result(
+                flight,
+                status="no_lower_fare",
+                message="No new cheaper alternatives found",
+                **board_fields,
+            )
 
         port = self.reservation_monitor.config.ignore_server_port
         base_url = (
@@ -185,6 +378,28 @@ class FareChecker:
         self.reservation_monitor.notification_handler.alternate_fares(
             flight, visible, flight_date, base_url, token
         )
+        return self._make_result(
+            flight,
+            status="lower_fare",
+            message=f"{len(visible)} cheaper alternative(s) found",
+            alternatives=visible,
+            **board_fields,
+        )
+
+    def _board_result_fields(self, board: list[JSON], fare_type: str | None) -> JSON:
+        """
+        Build the FareCheckResult fields derived from a same-day board: the board itself plus the
+        current flight's own price, taken from whichever entry is flagged as the current flight.
+        """
+        current = next((entry for entry in board if entry["isCurrent"]), None)
+
+        return {
+            "board": board,
+            "fare_type": fare_type,
+            "current_points": current["points"] if current else None,
+            "difference_amount": current["difference"] if current else None,
+            "currency_code": current["currencyCode"] if current else None,
+        }
 
     def _bound_matches_flight(self, bound: JSON, flight: Flight) -> bool:
         """Return True if a reservation bound's flight number matches the given flight."""
@@ -194,7 +409,7 @@ class FareChecker:
 
     def _check_companion_fare_via_webdriver(
         self, flight: Flight, companion_fare_points: int | None
-    ) -> None:
+    ) -> FareCheckResult:
         """
         Last-resort companion fare check using a real browser session to load the public
         Southwest flight search page. The public search has no knowledge of companion-pass
@@ -221,7 +436,12 @@ class FareChecker:
             self._log_companion_unavailable(
                 flight, companion_fare_points, reason="could not determine departure date"
             )
-            return
+            return self._make_result(
+                flight,
+                status="unavailable",
+                message="Could not determine departure date",
+                paid_points=companion_fare_points,
+            )
 
         origin = flight.departure_airport_code
         destination = flight.destination_airport_code
@@ -258,7 +478,12 @@ class FareChecker:
                     self._log_companion_unavailable(
                         flight, companion_fare_points, reason="webdriver timeout"
                     )
-                    return
+                    return self._make_result(
+                        flight,
+                        status="unavailable",
+                        message="Webdriver timeout",
+                        paid_points=companion_fare_points,
+                    )
             except Exception as err:
                 logger.error(
                     "Companion webdriver fare check failed for %s: %s",
@@ -266,7 +491,12 @@ class FareChecker:
                     err,
                 )
                 self._log_companion_unavailable(flight, companion_fare_points, reason=str(err))
-                return
+                return self._make_result(
+                    flight,
+                    status="error",
+                    message=str(err),
+                    paid_points=companion_fare_points,
+                )
 
         logger.debug(
             "Public search response for %s: %s",
@@ -287,7 +517,12 @@ class FareChecker:
             self._log_companion_unavailable(
                 flight, companion_fare_points, reason="unexpected search response structure"
             )
-            return
+            return self._make_result(
+                flight,
+                status="unavailable",
+                message="Unexpected search response structure",
+                paid_points=companion_fare_points,
+            )
 
         # Determine the fare type from the reservation bounds
         bounds = flight.reservation_info.get("bounds", [])
@@ -302,7 +537,16 @@ class FareChecker:
                 "Companion webdriver fare check failed for %s: could not determine fare type.",
                 flight.confirmation_number,
             )
-            return
+            return self._make_result(
+                flight,
+                status="error",
+                message="Could not determine fare type",
+                paid_points=companion_fare_points,
+            )
+
+        # The full same-day board is attached to every result below so the UI can show all
+        # flights that day, not just the ones that turn out to be cheaper.
+        board = self._build_public_board(cards, fare_type, flight, companion_fare_points)
 
         # The public search returns absolute prices, not priceDifference.
         # Find the lowest points fare for the matching flight(s) and fare type.
@@ -315,21 +559,34 @@ class FareChecker:
                 flight.confirmation_number,
                 fare_type,
             )
-            return
+            return self._make_result(
+                flight,
+                status="unavailable",
+                message=f"No {fare_type} points fare available in public search results",
+                paid_points=companion_fare_points,
+                board=board,
+                fare_type=fare_type,
+            )
 
         # same_day_smart: find all cheaper alternate flights, not just the same flight
         if self.reservation_monitor.config.check_fares == CheckFaresOption.SAME_DAY_SMART:
             if companion_fare_points is not None:
-                self._check_companion_alternate_fares(
+                return self._check_companion_alternate_fares(
                     flight, cards, fare_type, companion_fare_points, departure_date
                 )
-            else:
-                logger.info(
-                    "Companion alternate fare check for flight %s: set 'companionFarePoints' "
-                    "in config to enable same_day_smart alternate fare checking.",
-                    flight.confirmation_number,
-                )
-            return
+            logger.info(
+                "Companion alternate fare check for flight %s: set 'companionFarePoints' "
+                "in config to enable same_day_smart alternate fare checking.",
+                flight.confirmation_number,
+            )
+            return self._make_result(
+                flight,
+                status="unavailable",
+                message="Set 'companionFarePoints' in config to enable same_day_smart checking",
+                current_points=lowest_points,
+                board=board,
+                fare_type=fare_type,
+            )
 
         if companion_fare_points is not None:
             difference = lowest_points - companion_fare_points
@@ -341,20 +598,42 @@ class FareChecker:
                 self.reservation_monitor.notification_handler.lower_fare(
                     flight, f"{difference:+,} PTS"
                 )
+                status = "lower_fare"
             else:
                 logger.info(
                     "Companion fare check for flight %s: %s (no lower fare found)",
                     flight.confirmation_number,
                     price_info,
                 )
-        else:
-            logger.info(
-                "Companion fare check for flight %s: current %s fare is %s PTS. "
-                "Set 'companionFarePoints' in config to detect lower fares.",
-                flight.confirmation_number,
-                fare_type,
-                f"{lowest_points:,}",
+                status = "no_lower_fare"
+
+            return self._make_result(
+                flight,
+                status=status,
+                message=price_info,
+                currency_code="PTS",
+                difference_amount=difference,
+                current_points=lowest_points,
+                paid_points=companion_fare_points,
+                board=board,
+                fare_type=fare_type,
             )
+
+        logger.info(
+            "Companion fare check for flight %s: current %s fare is %s PTS. "
+            "Set 'companionFarePoints' in config to detect lower fares.",
+            flight.confirmation_number,
+            fare_type,
+            f"{lowest_points:,}",
+        )
+        return self._make_result(
+            flight,
+            status="unavailable",
+            message="Set 'companionFarePoints' in config to detect lower fares",
+            current_points=lowest_points,
+            board=board,
+            fare_type=fare_type,
+        )
 
     def _check_companion_alternate_fares(
         self,
@@ -363,7 +642,7 @@ class FareChecker:
         fare_type: str,
         companion_fare_points: int,
         flight_date: str,
-    ) -> None:
+    ) -> FareCheckResult:
         """
         Find all cheaper alternate flights for a companion-pass flight using public search cards.
         Called from _check_companion_fare_via_webdriver when check_fares == SAME_DAY_SMART.
@@ -376,69 +655,24 @@ class FareChecker:
         conf = flight.confirmation_number
         ignore_manager = IgnoreManager()
 
+        board = self._build_public_board(cards, fare_type, flight, companion_fare_points)
+        board_fields = self._board_result_fields(board, fare_type)
+        # The public search reports absolute prices, so the paid fare is what the board's
+        # differences were derived against rather than something recoverable from the board.
+        board_fields["paid_points"] = companion_fare_points
+
         if ignore_manager.is_day_ignored(conf, flight_date):
             logger.info(
                 "All alternate fares for companion flight %s on %s are ignored", conf, flight_date
             )
-            return
-
-        # Smart nonstop filter: match the current flight's stop preference
-        if self._is_nonstop(flight):
-
-            def passes_filter(card: JSON) -> bool:
-                return "NONSTOP" in card.get("filterTags", [])
-        else:
-
-            def passes_filter(_card: JSON) -> bool:
-                return True
-
-        alternatives = []
-        for card in cards:
-            if not passes_filter(card):
-                continue
-
-            card_nums = card.get("flightNumbers", [])
-
-            # Get the absolute points price
-            try:
-                total_fare = card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]
-            except (KeyError, TypeError):
-                continue
-
-            if total_fare.get("currencyCode") != "POINTS":
-                continue
-
-            try:
-                price = int(str(total_fare.get("value", "")).replace(",", ""))
-            except (ValueError, TypeError):
-                continue
-
-            savings_amount = price - companion_fare_points
-            if savings_amount >= -1:
-                continue  # Not genuinely cheaper
-
-            # Build flight number strings
-            flight_numbers_str = "\u200b/\u200b".join(card_nums)
-            display_number = "/".join(card_nums)
-
-            # Extract departure time — public search may use departureTime or departureDateTime
-            dep_time = card.get("departureTime") or card.get("departureDateTime", "")
-            if "T" in dep_time:
-                dep_time = dep_time.split("T")[1][:5]
-
-            stop_desc = card.get("stopDescription", "")
-
-            alternatives.append(
-                {
-                    "flightNumbers": flight_numbers_str,
-                    "displayNumber": display_number,
-                    "departureTime": dep_time,
-                    "stopDescription": stop_desc,
-                    "savings": {"amount": savings_amount, "currencyCode": "PTS"},
-                }
+            return self._make_result(
+                flight,
+                status="skipped",
+                message="All alternate fares for this day are ignored",
+                **board_fields,
             )
 
-        alternatives.sort(key=lambda x: x["savings"]["amount"])
+        alternatives = self._cheaper_from_board(board, flight)
 
         visible = [
             a
@@ -453,7 +687,12 @@ class FareChecker:
                 conf,
                 flight_date,
             )
-            return
+            return self._make_result(
+                flight,
+                status="no_lower_fare",
+                message="No new cheaper alternatives found",
+                **board_fields,
+            )
 
         port = self.reservation_monitor.config.ignore_server_port
         base_url = (
@@ -462,6 +701,13 @@ class FareChecker:
         token = self.reservation_monitor.config.ignore_server_token
         self.reservation_monitor.notification_handler.alternate_fares(
             flight, visible, flight_date, base_url, token
+        )
+        return self._make_result(
+            flight,
+            status="lower_fare",
+            message=f"{len(visible)} cheaper alternative(s) found",
+            alternatives=visible,
+            **board_fields,
         )
 
     def _extract_cards_from_search_response(self, response: JSON) -> list[JSON] | None:
@@ -713,3 +959,14 @@ def any_flight_filter(*_) -> bool:
 
 def nonstop_flight_filter(_, flight_json: JSON) -> bool:
     return flight_json["stopDescription"] == "Nonstop"
+
+
+def is_companion_flight(flight: Flight) -> bool:
+    """
+    Return True if the reservation has a companion pass attached.
+
+    Module-level so callers other than FareChecker (e.g. the web UI) can detect this without
+    duplicating the check.
+    """
+    grey_box = flight.reservation_info.get("greyBoxMessage") or {}
+    return "companion" in (grey_box.get("body") or "").lower()
