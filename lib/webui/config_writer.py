@@ -11,6 +11,7 @@ web UI and the CLI accept exactly the same input.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import tempfile
@@ -86,7 +87,23 @@ def write_reservations(config_path: Path, reservations: list[JSON]) -> None:
         tmp.write("\n")
         tmp_path = tmp.name
 
-    os.replace(tmp_path, config_path)
+    try:
+        os.replace(tmp_path, config_path)
+    except OSError as err:
+        if err.errno != errno.EBUSY:
+            raise
+        # config_path is likely a single-file bind mount (common in Docker -- see the Docker
+        # Compose examples in the README), which the kernel refuses to rename over since the
+        # path itself is a mount point. Fall back to an in-place, non-atomic write instead.
+        logger.debug(
+            "Could not atomically replace %s (resource busy); writing in place instead",
+            config_path,
+        )
+        with open(tmp_path, encoding="utf-8") as tmp_file:
+            content = tmp_file.read()
+        config_path.write_text(content)
+        os.unlink(tmp_path)
+
     logger.debug("Wrote %d reservations to the configuration file", len(reservations))
 
 
