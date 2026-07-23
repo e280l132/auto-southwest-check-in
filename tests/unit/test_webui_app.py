@@ -91,9 +91,7 @@ class TestIndexRoute:
 
         mock_results_store_cls.return_value.clear_all.assert_called_once()
 
-    def test_index_keeps_results_right_after_a_completed_check(
-        self, mocker: MockerFixture
-    ) -> None:
+    def test_index_keeps_results_right_after_a_completed_check(self, mocker: MockerFixture) -> None:
         mock_results_store_cls = mocker.patch("lib.webui.app.ResultsStore")
         app = create_app(GlobalConfig())
         client = app.test_client()
