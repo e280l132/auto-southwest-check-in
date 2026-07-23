@@ -463,6 +463,10 @@ class ReservationConfig(Config):
         "companionFarePoints",
         "originalFarePoints",
         "originalTaxesFees",
+        "cachedFlightNumber",
+        "cachedDepartureAirportCode",
+        "cachedDestinationAirportCode",
+        "cachedLocalDepartureDate",
     }
 
     def __init__(self) -> None:
@@ -473,6 +477,10 @@ class ReservationConfig(Config):
         self.companion_fare_points = None
         self.original_fare_points = None
         self.original_taxes_fees = None
+        self.cached_flight_number = None
+        self.cached_departure_airport_code = None
+        self.cached_destination_airport_code = None
+        self.cached_local_departure_date = None
         self.unknown_keys = []
 
     def _parse_config(self, config: JSON) -> None:
@@ -518,6 +526,21 @@ class ReservationConfig(Config):
                 raise ConfigError("'originalTaxesFees' must not be negative")
             self.original_taxes_fees = original_taxes_fees
             logger.debug("Setting original taxes/fees to %s", original_taxes_fees)
+
+        # Written automatically by the web UI after a fare check, purely so the last known
+        # flight identity (not fare) can be shown without re-running a check. Never set by hand.
+        cached_fields = (
+            ("cachedFlightNumber", "cached_flight_number"),
+            ("cachedDepartureAirportCode", "cached_departure_airport_code"),
+            ("cachedDestinationAirportCode", "cached_destination_airport_code"),
+            ("cachedLocalDepartureDate", "cached_local_departure_date"),
+        )
+        for json_key, attr in cached_fields:
+            if json_key in config:
+                value = config[json_key]
+                if not isinstance(value, str):
+                    raise ConfigError(f"'{json_key}' must be a string")
+                setattr(self, attr, value)
 
         self.unknown_keys = self._warn_unknown_keys(
             config, f"reservation {self.confirmation_number}"

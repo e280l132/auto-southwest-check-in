@@ -21,7 +21,6 @@ from flask import (
     url_for,
 )
 
-from .. import daemon_status
 from ..config import ConfigError, GlobalConfig, ReservationConfig
 from ..ignore_manager import IgnoreManager
 from ..log import get_logger
@@ -76,7 +75,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
     state = ConfigState(config)
 
     results_store = ResultsStore()
-    job_manager = JobManager(results_store)
+    job_manager = JobManager(results_store, state.config_path, state.reload)
 
     def _require_reservation(confirmation_number: str) -> ReservationConfig:
         reservation_config = state.find_reservation(confirmation_number)
@@ -125,7 +124,6 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             "index.html",
             reservations=reservations,
             summary=service.build_summary(reservations),
-            daemon_running=daemon_status.is_running(),
         )
 
     # ------------------------------------------------------------------

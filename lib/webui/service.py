@@ -79,6 +79,30 @@ def resolve_paid_points(reservation_config: ReservationConfig) -> tuple[int | No
     return None, None
 
 
+def cached_flight_summary(reservation_config: ReservationConfig) -> JSON | None:
+    """
+    The last known flight identity (route/number/date) written to config.json after a check, or
+    None if nothing has been cached yet. Purely cosmetic -- no fare data, since that's never
+    persisted to config.json.
+    """
+    if not (
+        reservation_config.cached_flight_number
+        and reservation_config.cached_departure_airport_code
+        and reservation_config.cached_destination_airport_code
+        and reservation_config.cached_local_departure_date
+    ):
+        return None
+
+    return {
+        "flight_number": reservation_config.cached_flight_number,
+        "route": (
+            f"{reservation_config.cached_departure_airport_code} → "
+            f"{reservation_config.cached_destination_airport_code}"
+        ),
+        "local_departure_date": reservation_config.cached_local_departure_date,
+    }
+
+
 def reservation_summary(reservation_config: ReservationConfig) -> JSON:
     """Reservation-level view model, available immediately without running any fare check."""
     paid_points, paid_points_source = resolve_paid_points(reservation_config)
@@ -96,6 +120,7 @@ def reservation_summary(reservation_config: ReservationConfig) -> JSON:
         "original_taxes_fees": reservation_config.original_taxes_fees,
         "paid_points": paid_points,
         "paid_points_source": paid_points_source,
+        "cached_flight": cached_flight_summary(reservation_config),
         # Config keys the parser doesn't understand, so a typo like 'checkFares' is visible
         # instead of silently having no effect
         "unknown_keys": unknown_keys,

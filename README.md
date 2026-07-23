@@ -152,17 +152,11 @@ Edits are validated with the same rules the CLI uses and take effect in the web 
 Some caveats:
 - Reservations are assumed to be **one-way**, so one paid fare per reservation is one paid fare per
   flight.
-- A separately running check-in daemon keeps its old configuration until it is **restarted**.
+- The check-in daemon keeps its old configuration until you hit **"Reload config"** (see below).
 - Only the `reservations` section is ever read or written. Your `accounts` and `notifications`
   blocks are preserved untouched and are never displayed in the UI, since they hold credentials
   and notification URLs. Keys the script doesn't recognize are preserved too — and flagged, so a
   typo like `checkFares` (the real key is `check_fares`) doesn't silently do nothing.
-
-#### Running alongside the daemon
-Since the web UI and the check-in daemon run in the same process by default, the UI shows a
-banner and asks for confirmation before starting a manual check. Both drive their own browser
-session, and running two at once against Southwest is a good way to get rate limited. Scheduled
-checks and fare emails are unaffected either way.
 
 #### Reloading to apply changes
 Editing `reservations` in `config.json` (via the UI or by hand) takes effect for the web UI

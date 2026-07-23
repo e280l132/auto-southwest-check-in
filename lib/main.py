@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import atexit
 import multiprocessing
 import os
 import sys
@@ -13,7 +12,7 @@ import requests
 
 from lib import log
 
-from . import app_control, daemon_status
+from . import app_control
 from .config import IS_DOCKER, GlobalConfig, ReservationConfig
 from .ignore_manager import IgnoreManager
 from .ignore_server import start_ignore_server
@@ -191,10 +190,6 @@ def _start_monitoring(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
         pluralize("reservation", num_reservations),
     )
 
-    # Record that the daemon is running so the web UI can warn before starting a browser session
-    # of its own.
-    daemon_status.write_pid_file()
-
     # Remove ignore entries for reservations no longer in the config.
     # Accounts are excluded because their confirmation numbers aren't known until runtime.
     if config.reservations:
@@ -253,7 +248,6 @@ def set_up_check_in(arguments: list[str]) -> None:
 
     _apply_cli_overrides(config, arguments)
 
-    atexit.register(daemon_status.remove_pid_file)
     lock = multiprocessing.Lock()
 
     _start_monitoring(config, lock)

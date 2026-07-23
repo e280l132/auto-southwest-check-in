@@ -27,14 +27,6 @@
     <p id="reload-status" class="status-text" role="status"></p>
 
     <main>
-        {% if daemon_running %}
-        <p class="notice notice-daemon">
-            <strong>The check-in daemon is running.</strong>
-            It drives its own browser session, so starting a check here at the same time may trip
-            Southwest's rate limiting. Scheduled checks and fare emails continue either way.
-        </p>
-        {% endif %}
-
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 <div class="flashes">

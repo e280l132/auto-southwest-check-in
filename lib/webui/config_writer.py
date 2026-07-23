@@ -107,6 +107,47 @@ def write_reservations(config_path: Path, reservations: list[JSON]) -> None:
     logger.debug("Wrote %d reservations to the configuration file", len(reservations))
 
 
+def update_cached_flight(
+    config_path: Path,
+    confirmation_number: str,
+    *,
+    flight_number: str,
+    departure_airport_code: str,
+    destination_airport_code: str,
+    local_departure_date: str,
+) -> bool:
+    """
+    Persist the last known flight identity (not fare) for a reservation, so the web UI can show
+    the route/flight number/date without re-running a check. Purely cosmetic cache: the check-in
+    daemon never reads these fields, so this has no effect on monitoring or check-in behavior.
+
+    Returns whether anything actually changed, so the caller can skip a config reload when the
+    values already matched (e.g. re-checking a flight whose schedule hasn't changed).
+    """
+    new_values = {
+        "cachedFlightNumber": flight_number,
+        "cachedDepartureAirportCode": departure_airport_code,
+        "cachedDestinationAirportCode": destination_airport_code,
+        "cachedLocalDepartureDate": local_departure_date,
+    }
+
+    reservations = read_reservations(config_path)
+    changed = False
+    updated = []
+    for reservation in reservations:
+        if reservation.get("confirmationNumber") == confirmation_number and any(
+            reservation.get(key) != value for key, value in new_values.items()
+        ):
+            reservation = {**reservation, **new_values}
+            changed = True
+        updated.append(reservation)
+
+    if changed:
+        write_reservations(config_path, updated)
+
+    return changed
+
+
 def rename_key(reservation: JSON, old_key: str, new_key: str) -> JSON:
     """
     Rename a key in place, preserving its value and position — used to fix a known typo (e.g.

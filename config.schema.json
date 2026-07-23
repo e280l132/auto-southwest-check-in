@@ -76,6 +76,22 @@
                         "type": "number",
                         "minimum": 0,
                         "description": "Taxes/fees (in USD) originally paid for this reservation, shown in the web UI"
+                    },
+                    "cachedFlightNumber": {
+                        "type": "string",
+                        "description": "Written automatically by the web UI after a fare check; shows the flight number without re-checking. Not meant to be set by hand"
+                    },
+                    "cachedDepartureAirportCode": {
+                        "type": "string",
+                        "description": "Written automatically by the web UI after a fare check; shows the route without re-checking. Not meant to be set by hand"
+                    },
+                    "cachedDestinationAirportCode": {
+                        "type": "string",
+                        "description": "Written automatically by the web UI after a fare check; shows the route without re-checking. Not meant to be set by hand"
+                    },
+                    "cachedLocalDepartureDate": {
+                        "type": "string",
+                        "description": "Written automatically by the web UI after a fare check; shows the date without re-checking. Not meant to be set by hand"
                     }
                 },
                 "required": ["confirmationNumber", "firstName", "lastName"],

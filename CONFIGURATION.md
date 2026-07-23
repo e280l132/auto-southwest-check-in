@@ -25,6 +25,7 @@ reservation-specific configurations).
         - [Companion Fare Points](#companion-fare-points)
         - [Original Fare Points](#original-fare-points)
         - [Original Taxes & Fees](#original-taxes--fees)
+        - [Cached Flight Info](#cached-flight-info)
 - [Healthchecks URL](#healthchecks-url)
 
 ## Check Fares
@@ -359,6 +360,21 @@ This option is only applicable to reservation configurations (not account config
     ]
 }
 ```
+
+#### Cached Flight Info
+Default: None \
+Type: String (reservation-only)
+
+`cachedFlightNumber`, `cachedDepartureAirportCode`, `cachedDestinationAirportCode`, and
+`cachedLocalDepartureDate` are written automatically by the [web UI](README.md#web-ui) the first
+time it successfully checks a reservation, and kept up to date on every check after that. They let
+the route, flight number, and date show up on the page immediately, without waiting for another
+check. This is identity, not fare data — no pricing is ever stored here.
+
+You don't need to set these by hand, and the check-in daemon itself never reads them — they exist
+purely for the web UI's display.
+
+This option is only applicable to reservation configurations (not account configurations).
 
 ### Account and Reservation-specific configuration
 Setting specific configuration values for an account or reservation allows you to fully customize how you want them to be

@@ -3,8 +3,7 @@
 {% block topbar_actions %}
 <div class="topbar-actions">
     <a class="btn btn-secondary" href="{{ url_for('new_reservation') }}">Add flight</a>
-    <button id="check-all-btn" class="btn btn-primary" {% if not reservations %}disabled{% endif %}
-            data-daemon-running="{{ 'true' if daemon_running else 'false' }}">
+    <button id="check-all-btn" class="btn btn-primary" {% if not reservations %}disabled{% endif %}>
         Check all fares
     </button>
 </div>
@@ -71,8 +70,7 @@
             </div>
             <div class="card-tools">
                 <button class="btn btn-primary btn-sm check-btn"
-                        data-confirmation="{{ r.confirmation_number }}"
-                        data-daemon-running="{{ 'true' if daemon_running else 'false' }}">
+                        data-confirmation="{{ r.confirmation_number }}">
                     Check fares
                 </button>
                 <a class="btn btn-ghost btn-sm"
@@ -102,7 +100,17 @@
         <p class="status-text" id="status-{{ r.confirmation_number }}" role="status"></p>
 
         {% if not r.last_check %}
+            {% if r.cached_flight %}
+            <section class="flight">
+                <div class="flight-head">
+                    <h3>{{ r.cached_flight.route }}</h3>
+                    <span class="muted">Flight {{ r.cached_flight.flight_number }} &middot; {{ r.cached_flight.local_departure_date }}</span>
+                </div>
+                <p class="muted no-check-yet">Not checked yet this session &mdash; fare and board unknown.</p>
+            </section>
+            {% else %}
             <p class="muted no-check-yet">Not checked yet.</p>
+            {% endif %}
         {% elif r.last_check.error %}
             <p class="checked-at" data-timestamp="{{ r.last_check.checked_at }}">Last checked: {{ r.last_check.checked_at }}</p>
             <p class="notice notice-error">

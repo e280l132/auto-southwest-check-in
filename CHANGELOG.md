@@ -18,11 +18,15 @@ to run only the UI)
     - Reservations can be added, edited, and removed from the browser, including an inline editor
     for the fare you paid. Only the `reservations` section of `config.json` is read or written;
     `accounts`, `notifications`, and unrecognized keys are left untouched
-    - Warns when the check-in daemon is already running, since both drive their own browser session
     - "Reload config" button restarts the check-in daemon's monitoring processes (without
     restarting the web UI itself) so config changes made in the UI are picked up immediately
     - Fare-check results no longer persist across page loads: only the page load right after a
     check shows its result, so a manual refresh always starts clean
+    - A checked flight's route, flight number, and date are cached in `config.json`
+    (`cachedFlightNumber`/`cachedDepartureAirportCode`/`cachedDestinationAirportCode`/
+    `cachedLocalDepartureDate`) so they still show up on later page loads, even after the
+    ephemeral fare-check result has been cleared. Purely cosmetic — the check-in daemon never
+    reads these fields
 - Unrecognized settings in a reservation (e.g. `checkFares` instead of `check_fares`) are now
 logged with a suggested correction instead of being silently ignored
 
