@@ -21,9 +21,6 @@ exclude_lines = [
 [tool.pytest.ini_options]
 # Don't use the seleniumbase plugin for pytest
 addopts = "-p no:seleniumbase"
-markers = [
-    "no_mock_web_ui: opt out of test_main.py's autouse web UI mock to exercise its real body",
-]
 
 [tool.ruff]
 line-length = 100
