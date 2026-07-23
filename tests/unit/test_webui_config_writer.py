@@ -25,6 +25,15 @@ def config_path(tmp_path: Path) -> Path:
     return path
 
 
+class TestReadConfig:
+    def test_raises_when_the_file_is_not_a_json_object(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(["not", "a", "dict"]))
+
+        with pytest.raises(ValueError, match="JSON dictionary"):
+            config_writer.read_config(path)
+
+
 class TestReadReservations:
     def test_reads_the_reservations_list(self, config_path: Path) -> None:
         assert config_writer.read_reservations(config_path) == EXISTING_CONFIG["reservations"]

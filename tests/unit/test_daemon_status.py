@@ -43,6 +43,12 @@ class TestRemovePidFile:
     def test_missing_file_does_not_raise(self, pid_file: Path) -> None:
         daemon_status.remove_pid_file(pid_file)
 
+    def test_unlink_failure_does_not_raise(self, pid_file: Path, mocker: MockerFixture) -> None:
+        daemon_status.write_pid_file(pid_file)
+        mocker.patch.object(Path, "unlink", side_effect=OSError("boom"))
+
+        daemon_status.remove_pid_file(pid_file)
+
 
 class TestGetRunningPid:
     def test_returns_none_when_the_file_is_missing(self, pid_file: Path) -> None:
@@ -55,6 +61,14 @@ class TestGetRunningPid:
     def test_returns_none_for_a_stale_pid(self, pid_file: Path, mocker: MockerFixture) -> None:
         pid_file.write_text("4242")
         mocker.patch("os.kill", side_effect=ProcessLookupError)
+
+        assert daemon_status.get_running_pid(pid_file) is None
+
+    def test_returns_none_for_an_unexpected_os_error(
+        self, pid_file: Path, mocker: MockerFixture
+    ) -> None:
+        pid_file.write_text("4242")
+        mocker.patch("os.kill", side_effect=OSError("boom"))
 
         assert daemon_status.get_running_pid(pid_file) is None
 

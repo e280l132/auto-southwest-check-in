@@ -16,7 +16,7 @@ def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
         if predicate():
             return
         time.sleep(0.01)
-    raise AssertionError("Timed out waiting for condition")
+    raise AssertionError("Timed out waiting for condition")  # pragma: no cover
 
 
 class FakeReservationConfig:
@@ -49,6 +49,12 @@ class TestJobManagerSingleCheck:
 
     def test_get_job_returns_none_for_unknown_id(self, mocker: MockerFixture) -> None:
         manager = JobManager(results_store=mocker.MagicMock())
+        assert manager.get_job("does-not-exist") is None
+
+    def test_update_job_is_a_no_op_for_an_unknown_id(self, mocker: MockerFixture) -> None:
+        manager = JobManager(results_store=mocker.MagicMock())
+        # Should not raise, and should not create an entry for the unknown id
+        manager._update_job("does-not-exist", status="done")
         assert manager.get_job("does-not-exist") is None
 
 

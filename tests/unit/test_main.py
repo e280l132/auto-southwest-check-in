@@ -18,11 +18,14 @@ def mock_config(mocker: MockerFixture) -> None:
 
 
 @pytest.fixture(autouse=True)
-def mock_web_ui(mocker: MockerFixture) -> MockerFixture:
+def mock_web_ui(request: pytest.FixtureRequest, mocker: MockerFixture) -> MockerFixture | None:
     """
     The web UI now starts automatically, so avoid actually building a Flask app/binding a port
-    for tests that aren't specifically about the web UI startup itself.
+    for tests that aren't specifically about the web UI startup itself. Tests that exercise
+    start_web_ui_background's real body opt out with @pytest.mark.no_mock_web_ui.
     """
+    if "no_mock_web_ui" in request.keywords:
+        return None
     return mocker.patch("lib.main.start_web_ui_background")
 
 
@@ -260,6 +263,26 @@ def test_set_up_check_in_starts_web_ui_by_default(
 
 
 @pytest.mark.usefixtures("mock_wait")
+def test_set_up_check_in_uses_an_explicit_web_port(mock_web_ui: MockerFixture) -> None:
+    main.set_up_check_in(["--web-port", "1234"])
+    assert mock_web_ui.call_args[0][2] == 1234
+
+
+@pytest.mark.no_mock_web_ui
+def test_start_web_ui_background_starts_a_daemon_thread(mocker: MockerFixture) -> None:
+    mock_create_app = mocker.patch("lib.webui.app.create_app")
+    mock_thread_cls = mocker.patch("lib.main.threading.Thread")
+    config = GlobalConfig()
+
+    main.start_web_ui_background(config, "127.0.0.1", 9000)
+
+    mock_create_app.assert_called_once_with(config)
+    mock_thread_cls.assert_called_once()
+    assert mock_thread_cls.call_args.kwargs["daemon"] is True
+    mock_thread_cls.return_value.start.assert_called_once()
+
+
+@pytest.mark.usefixtures("mock_wait")
 def test_set_up_check_in_skips_web_ui_with_no_web_flag(
     mocker: MockerFixture, mock_web_ui: MockerFixture
 ) -> None:
@@ -342,6 +365,20 @@ def test_wait_for_children_or_reload_joins_children_until_reload(mocker: MockerF
     main._wait_for_children_or_reload()
 
     mock_child.join.assert_called_once_with(timeout=1)
+
+
+def test_wait_for_children_or_reload_loops_back_when_still_not_requested(
+    mocker: MockerFixture,
+) -> None:
+    mock_child = mocker.Mock()
+    mocker.patch("multiprocessing.active_children", return_value=[mock_child])
+    # Not requested right after the join either, so the for-loop finishes normally and the outer
+    # while re-checks -- only then does the reload get requested
+    mocker.patch("lib.main.app_control.reload_requested", side_effect=[False, False, True])
+
+    main._wait_for_children_or_reload()
+
+    assert mock_child.join.call_count == 1
 
 
 def test_wait_for_children_or_reload_sleeps_when_no_children(mocker: MockerFixture) -> None:

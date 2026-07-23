@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pytest_mock import MockerFixture
 
 from lib.webui.results_store import ResultsStore
 
@@ -37,6 +38,42 @@ class TestResultsStore:
 
         all_results = store.get_all()
         assert set(all_results) == {"ABCDEF", "GHIJKL"}
+
+    def test_delete_result_removes_only_that_confirmation(self, store: ResultsStore) -> None:
+        store.save_result("ABCDEF", {"checked_at": "a"})
+        store.save_result("GHIJKL", {"checked_at": "b"})
+
+        store.delete_result("ABCDEF")
+
+        assert store.get_all() == {"GHIJKL": {"checked_at": "b"}}
+
+    def test_delete_result_is_a_no_op_when_not_saved(self, store: ResultsStore) -> None:
+        # Should not raise or write the file
+        store.delete_result("DOES-NOT-EXIST")
+        assert store.get_all() == {}
+
+    def test_treats_non_dict_json_as_empty(self, tmp_results_file: Path) -> None:
+        tmp_results_file.write_text('["not", "a", "dict"]')
+        store = ResultsStore(filepath=tmp_results_file)
+
+        assert store.get_all() == {}
+
+    def test_save_replaces_a_directory_left_at_the_path(self, tmp_results_file: Path) -> None:
+        tmp_results_file.mkdir()
+        store = ResultsStore(filepath=tmp_results_file)
+
+        store.save_result("ABCDEF", {"checked_at": "now"})
+
+        assert tmp_results_file.is_file()
+        assert store.get_result("ABCDEF") == {"checked_at": "now"}
+
+    def test_save_failure_does_not_raise(
+        self, tmp_results_file: Path, mocker: MockerFixture
+    ) -> None:
+        store = ResultsStore(filepath=tmp_results_file)
+        mocker.patch.object(Path, "write_text", side_effect=OSError("boom"))
+
+        store.save_result("ABCDEF", {"checked_at": "now"})
 
     def test_clear_all_removes_every_result(self, store: ResultsStore) -> None:
         store.save_result("ABCDEF", {"checked_at": "a"})

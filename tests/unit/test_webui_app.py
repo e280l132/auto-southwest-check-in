@@ -6,7 +6,7 @@ import pytest
 from flask.testing import FlaskClient
 from pytest_mock import MockerFixture
 
-from lib.config import GlobalConfig, ReservationConfig
+from lib.config import ConfigError, GlobalConfig, ReservationConfig
 from lib.webui import app as app_module
 from lib.webui.app import create_app
 
@@ -231,6 +231,15 @@ class TestReservationForms:
     def test_edit_form_404s_for_unknown_reservation(self, editing_client: FlaskClient) -> None:
         assert editing_client.get("/reservations/UNKNOWN/edit").status_code == 404
 
+    def test_edit_form_404s_when_missing_from_the_raw_config(
+        self, editing_client: FlaskClient, mocker: MockerFixture
+    ) -> None:
+        # Known to the in-memory config (passes _require_reservation) but not present when the
+        # raw file is re-read -- e.g. config.json changed on disk out from under the app.
+        mocker.patch("lib.webui.app.config_writer.read_reservations", return_value=[])
+
+        assert editing_client.get("/reservations/ABCDEF/edit").status_code == 404
+
 
 class TestCreateReservation:
     def test_creates_a_reservation(self, editing_client: FlaskClient, config_path: Path) -> None:
@@ -331,6 +340,36 @@ class TestUpdateReservation:
 
         assert json.loads(config_path.read_text())["reservations"][0]["firstName"] == "John"
 
+    def test_changing_the_confirmation_number_purges_the_old_stored_result(
+        self, editing_client: FlaskClient, config_path: Path
+    ) -> None:
+        response = editing_client.post(
+            "/api/reservations/ABCDEF",
+            data={"confirmationNumber": "NEWCONF", "firstName": "John", "lastName": "Doe"},
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        reservations = json.loads(config_path.read_text())["reservations"]
+        assert reservations[0]["confirmationNumber"] == "NEWCONF"
+        app_module.ResultsStore.return_value.delete_result.assert_called_with("ABCDEF")
+
+    def test_save_failure_is_reported(
+        self, editing_client: FlaskClient, config_path: Path, mocker: MockerFixture
+    ) -> None:
+        mocker.patch(
+            "lib.webui.app.config_writer.write_reservations", side_effect=OSError("disk full")
+        )
+
+        response = editing_client.post(
+            "/api/reservations/ABCDEF",
+            data={"confirmationNumber": "ABCDEF", "firstName": "Jacob", "lastName": "Fenster"},
+            follow_redirects=True,
+        )
+
+        assert b"disk full" in response.data
+        assert json.loads(config_path.read_text())["reservations"][0]["firstName"] == "John"
+
 
 class TestFixReservationKey:
     @pytest.fixture
@@ -397,6 +436,29 @@ class TestFixReservationKey:
 
         assert response.status_code == 404
 
+    def test_404s_when_missing_from_the_raw_config(
+        self, typo_client: FlaskClient, mocker: MockerFixture
+    ) -> None:
+        mocker.patch("lib.webui.app.config_writer.read_reservations", return_value=[])
+
+        response = typo_client.post("/api/reservations/ABCDEF/fix-key", data={"key": "checkFares"})
+
+        assert response.status_code == 404
+
+    def test_reports_a_validation_error_instead_of_saving(
+        self, typo_client: FlaskClient, mocker: MockerFixture
+    ) -> None:
+        mocker.patch(
+            "lib.webui.app.config_writer.validate_reservation",
+            side_effect=ConfigError("still invalid"),
+        )
+
+        response = typo_client.post(
+            "/api/reservations/ABCDEF/fix-key", data={"key": "checkFares"}, follow_redirects=True
+        )
+
+        assert b"still invalid" in response.data
+
 
 class TestUpdatePaidFare:
     def test_sets_the_paid_fare_inline(
@@ -445,6 +507,17 @@ class TestUpdatePaidFare:
     def test_404s_for_unknown_reservation(self, editing_client: FlaskClient) -> None:
         response = editing_client.post(
             "/api/reservations/UNKNOWN/paid-fare", data={"originalFarePoints": "100"}
+        )
+
+        assert response.status_code == 404
+
+    def test_404s_when_missing_from_the_raw_config(
+        self, editing_client: FlaskClient, mocker: MockerFixture
+    ) -> None:
+        mocker.patch("lib.webui.app.config_writer.read_reservations", return_value=[])
+
+        response = editing_client.post(
+            "/api/reservations/ABCDEF/paid-fare", data={"originalFarePoints": "100"}
         )
 
         assert response.status_code == 404
