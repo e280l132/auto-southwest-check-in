@@ -477,7 +477,9 @@ class FareChecker:
             departure_date,
         )
 
-        max_attempts = 2
+        # Each attempt is a fresh browser session, and driving several of them back to back
+        # (one per reservation, plus the reservation lookups) makes the occasional failure likely
+        max_attempts = 3
         response = None
         for attempt in range(
             max_attempts
@@ -486,20 +488,24 @@ class FareChecker:
                 webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
                 response = webdriver.get_public_flight_prices(origin, destination, departure_date)
                 break
-            except DriverTimeoutError:
+            except DriverTimeoutError as err:
                 if attempt < max_attempts - 1:
                     logger.debug(
-                        "Webdriver search timed out for %s, retrying...",
+                        "Public search failed for %s (%s), retrying...",
                         flight.confirmation_number,
+                        err,
                     )
                 else:
+                    # Not always a timeout: the browser reaching the page but the response not
+                    # carrying prices surfaces here too, so report what actually went wrong
                     logger.error(
-                        "Public search fare check timed out for %s after %d attempts.",
+                        "Public search fare check failed for %s after %d attempts: %s",
                         flight.confirmation_number,
                         max_attempts,
+                        err,
                     )
                     self._log_companion_unavailable(
-                        flight, companion_fare_points, reason="webdriver timeout"
+                        flight, companion_fare_points, reason=f"public search failed: {err}"
                     )
                     return self._make_result(
                         flight,
@@ -1008,5 +1014,11 @@ def is_companion_flight(flight: Flight) -> bool:
     Module-level so callers other than FareChecker (e.g. the web UI) can detect this without
     duplicating the check.
     """
-    grey_box = flight.reservation_info.get("greyBoxMessage") or {}
+    reservation_info = flight.reservation_info
+
+    # The website lookup states this outright; the mobile API only implies it in a grey box message
+    if reservation_info.get("hasCompanion"):
+        return True
+
+    grey_box = reservation_info.get("greyBoxMessage") or {}
     return "companion" in (grey_box.get("body") or "").lower()

@@ -36,6 +36,12 @@ def translate_manage_reservation(data: JSON) -> JSON:
 
     return {
         "bounds": bounds,
+        # Which fare was paid depends on this, so it has to survive the translation. The mobile
+        # payload only implies a companion through a grey box message; this one states it.
+        "hasCompanion": any(
+            reservation.get("type") == "COMPANION"
+            for reservation in data.get("associated_reservations") or []
+        ),
         # No change/reaccom links exist on this endpoint. Present-but-None keeps the fare checker
         # on its "cannot be changed online" path, which skips the check rather than erroring.
         "_links": {"change": None, "reaccom": None},

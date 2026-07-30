@@ -15,7 +15,8 @@ from pytest_mock import MockerFixture
 
 from lib.checkin_scheduler import RESERVATION_MAX_ATTEMPTS
 from lib.config import GlobalConfig
-from lib.fare_checker import FareChecker
+from lib.fare_checker import FareChecker, is_companion_flight
+from lib.flight import Flight
 from lib.reservation_monitor import ReservationMonitor
 from lib.reservation_schema import translate_manage_reservation
 from lib.utils import TRANSIENT_ORIGIN_REJECTION, RequestError
@@ -222,3 +223,24 @@ def test_public_search_uses_the_right_paid_fare(mocker: MockerFixture) -> None:
     mocker.patch.object(FareChecker, "_is_companion_flight", return_value=True)
     checker._check_fare_via_public_search(flight)
     assert delegate.call_args[0][1] == 4200
+
+
+def test_a_companion_reservation_is_recognised_from_the_website_payload() -> None:
+    """
+    The website states the companion outright while the mobile payload only implies it in a grey
+    box message. Losing it here silently prices the flight against the wrong paid fare.
+    """
+    data = json.loads(json.dumps(WEBSITE_DATA))
+    data["associated_reservations"] = [{"id": "CW3WCW", "type": "COMPANION"}]
+
+    info = translate_manage_reservation(data)
+    assert info["hasCompanion"] is True
+
+    flight = Flight(info["bounds"][0], info, "CW6KR4")
+    assert is_companion_flight(flight) is True
+
+
+def test_a_solo_reservation_is_not_treated_as_a_companion_one() -> None:
+    info = translate_manage_reservation(WEBSITE_DATA)
+
+    assert info["hasCompanion"] is False

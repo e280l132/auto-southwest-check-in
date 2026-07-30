@@ -59,6 +59,11 @@ logged with a suggested correction instead of being silently ignored
     there is nothing to compare
     - Fare-check log messages no longer describe every check as a companion one, and now name
     whichever paid-fare setting applies to the reservation
+    - Companion reservations retrieved from the website are recognised as such, so they are priced
+    against `companionFarePoints` rather than being reported as missing `originalFarePoints`
+    - Retry the public flight search once more before giving up, and say what actually went wrong
+    instead of always reporting a timeout. Several browser sessions run back to back during a
+    check, which makes the occasional failed search likely
     - Cookies and TLS fingerprint impersonation were both measured and neither helped, so neither
     was adopted
 - Stop cancelling scheduled check-ins when a reservation lookup fails
