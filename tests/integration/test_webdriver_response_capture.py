@@ -18,7 +18,12 @@ from unittest import mock
 import pytest
 from pytest_mock import MockerFixture
 
-from lib.utils import DriverTimeoutError, RequestError
+from lib.utils import (
+    FARE_CHECK_BACKOFF_CAP_SECS,
+    FARE_CHECK_MAX_ATTEMPTS,
+    DriverTimeoutError,
+    RequestError,
+)
 from lib.webdriver import WebDriver
 
 
@@ -65,7 +70,11 @@ def test_search_never_reads_the_response_body_via_cdp(mocker: MockerFixture) -> 
 def test_search_replay_goes_through_make_request_to_url(mocker: MockerFixture) -> None:
     """
     The replay must get real retry-with-backoff (like every other endpoint), not a single
-    one-shot request that fails outright on the first transient rejection.
+    one-shot request that fails outright on the first transient rejection. It must use the fast
+    fare-check backoff profile, not make_request_to_url's default reservation-style profile: the
+    default's 45s cap over 20 attempts can spend upwards of ten minutes on a single fare check,
+    which blocks both the daemon's per-cycle check and a user waiting on the web UI's "Check"
+    button -- exactly what was observed live before this fix (a ~10 minute wait per attempt).
     """
     wd = _webdriver(mocker)
     wd.search_request = {
@@ -86,6 +95,8 @@ def test_search_replay_goes_through_make_request_to_url(mocker: MockerFixture) -
         wd.search_request["url"],
         wd.search_request["headers"],
         {"origin": "LGA"},
+        max_attempts=FARE_CHECK_MAX_ATTEMPTS,
+        backoff_cap_secs=FARE_CHECK_BACKOFF_CAP_SECS,
     )
     assert result["data"]["searchResults"]["airProducts"] == [{}]
 

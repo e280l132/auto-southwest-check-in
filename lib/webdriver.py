@@ -15,7 +15,14 @@ from seleniumbase.fixtures import page_actions as seleniumbase_actions
 
 from .config import IS_DOCKER
 from .log import LOGS_DIRECTORY, get_logger
-from .utils import DriverTimeoutError, LoginError, make_request_to_url, random_sleep_duration
+from .utils import (
+    FARE_CHECK_BACKOFF_CAP_SECS,
+    FARE_CHECK_MAX_ATTEMPTS,
+    DriverTimeoutError,
+    LoginError,
+    make_request_to_url,
+    random_sleep_duration,
+)
 
 if TYPE_CHECKING:
     from .checkin_scheduler import CheckInScheduler
@@ -474,11 +481,26 @@ class WebDriver:
         Goes through make_request_to_url rather than a single one-shot request, since this
         endpoint is subject to the same intermittent Southwest rejections as everything else --
         a bare request here previously failed on the very first 403 with no retry at all.
+
+        Uses the fare-check backoff profile (fast, capped at 10s), not make_request_to_url's
+        default reservation-style profile (up to a 45s cap over 20 attempts, worth minutes total).
+        This is always on a path someone is actively waiting on -- the daemon's per-cycle fare
+        check, or a user watching the web UI's "Check" button -- and a fresh browser session
+        doesn't help this failure mode anyway (measured: replaying with freshly rotated sensor
+        headers fails at the same rate as replaying stale ones), so there's nothing to gain by
+        taking minutes to fail slowly here.
         """
         request = self.search_request
         body = json.loads(request["body"]) if request["body"] else None
 
-        result = make_request_to_url(request["method"], request["url"], request["headers"], body)
+        result = make_request_to_url(
+            request["method"],
+            request["url"],
+            request["headers"],
+            body,
+            max_attempts=FARE_CHECK_MAX_ATTEMPTS,
+            backoff_cap_secs=FARE_CHECK_BACKOFF_CAP_SECS,
+        )
 
         # Validate that the captured response contains flight pricing data
         try:
