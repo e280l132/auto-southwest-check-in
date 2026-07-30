@@ -66,14 +66,34 @@ def make_request(
     backoff_cap_secs: float = BACKOFF_CAP_SECS,
 ) -> JSON:
     """
-    Makes a request to the Southwest servers. For increased reliability, the request is performed
-    multiple times on failure. This request retrying is also necessary for check-ins, as check-ins
-    may start early.
+    Makes a request to the Southwest mobile API. For increased reliability, the request is
+    performed multiple times on failure. This request retrying is also necessary for check-ins, as
+    check-ins may start early.
     """
     # Ensure the URL is not malformed
     site = site.replace("//", "/").lstrip("/")
     url = BASE_URL + site
+    return make_request_to_url(
+        method, url, headers, info, max_attempts, random_sleep, backoff_cap_secs
+    )
 
+
+def make_request_to_url(
+    method: str,
+    url: str,
+    headers: JSON,
+    info: JSON,
+    max_attempts: int = 20,
+    random_sleep: bool = True,
+    backoff_cap_secs: float = BACKOFF_CAP_SECS,
+) -> JSON:
+    """
+    Same retrying/backoff behavior as make_request, for a request to a full URL rather than a path
+    under the mobile API. Used for requests to www.southwest.com (the website reservation lookup
+    and public flight search), which a plain one-shot request had no resilience against Southwest's
+    intermittent rejections -- exactly what this retry loop exists to ride out for every other
+    endpoint.
+    """
     attempts = 0
     while attempts < max_attempts:
         attempts += 1

@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import requests
 from sbvirtualdisplay import Display
 from seleniumbase import Driver
 from seleniumbase import config as sb_config
@@ -16,7 +15,7 @@ from seleniumbase.fixtures import page_actions as seleniumbase_actions
 
 from .config import IS_DOCKER
 from .log import LOGS_DIRECTORY, get_logger
-from .utils import DriverTimeoutError, LoginError, RequestError, random_sleep_duration
+from .utils import DriverTimeoutError, LoginError, make_request_to_url, random_sleep_duration
 
 if TYPE_CHECKING:
     from .checkin_scheduler import CheckInScheduler
@@ -403,19 +402,15 @@ class WebDriver:
         """
         Repeat the lookup the website just performed. Every header it sent is passed through:
         unlike the mobile API, this endpoint rejects a trimmed-down header set outright.
+
+        Goes through make_request_to_url rather than a single one-shot request, since this
+        endpoint is subject to the same intermittent Southwest rejections as everything else --
+        a bare request here previously failed on the very first 403 with no retry at all.
         """
         request = self.reservation_request
         body = json.loads(request["body"]) if request["body"] else None
 
-        response = requests.post(
-            request["url"], headers=request["headers"], json=body, timeout=30
-        )
-        if response.status_code != 200:
-            raise RequestError(
-                f"{response.reason} ({response.status_code})", response.content.decode()
-            )
-
-        reservation = response.json()
+        reservation = make_request_to_url("POST", request["url"], request["headers"], body)
         if "data" not in reservation:
             raise DriverTimeoutError("Reservation lookup response did not contain a reservation")
 
@@ -473,23 +468,17 @@ class WebDriver:
             }
 
     def _replay_search_request(self) -> JSON:
-        """Repeat the pricing request the search page just made."""
+        """
+        Repeat the pricing request the search page just made.
+
+        Goes through make_request_to_url rather than a single one-shot request, since this
+        endpoint is subject to the same intermittent Southwest rejections as everything else --
+        a bare request here previously failed on the very first 403 with no retry at all.
+        """
         request = self.search_request
         body = json.loads(request["body"]) if request["body"] else None
 
-        if request["method"].upper() == "POST":
-            response = requests.post(
-                request["url"], headers=request["headers"], json=body, timeout=30
-            )
-        else:
-            response = requests.get(request["url"], headers=request["headers"], timeout=30)
-
-        if response.status_code != 200:
-            raise RequestError(
-                f"{response.reason} ({response.status_code})", response.content.decode()
-            )
-
-        result = response.json()
+        result = make_request_to_url(request["method"], request["url"], request["headers"], body)
 
         # Validate that the captured response contains flight pricing data
         try:

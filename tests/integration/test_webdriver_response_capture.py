@@ -6,9 +6,11 @@ their data.
 raises "unhandled inspector error: No resource with given identifier found" — hit in production for
 the public flight search. The fix is the same one already used for the website reservation lookup:
 capture the request the browser makes (a plain navigation event with no such race) and repeat it
-with `requests` instead of reading the response back from Chrome. This covers that the search path
-was actually converted, and that the two remaining CDP body-reads (login, trips) degrade to a clean
-DriverTimeoutError instead of crashing the process and leaking the browser.
+instead of reading the response back from Chrome. This covers that the search path was actually
+converted, that the replay goes through make_request_to_url (retry-with-backoff, same as every
+other endpoint) rather than a bare one-shot request, and that the two remaining CDP body-reads
+(login, trips) degrade to a clean DriverTimeoutError instead of crashing the process and leaking
+the browser.
 """
 
 from unittest import mock
@@ -48,23 +50,23 @@ def test_search_never_reads_the_response_body_via_cdp(mocker: MockerFixture) -> 
         }
 
     mocker.patch.object(WebDriver, "_wait_for_attribute", side_effect=fake_wait)
-    mock_get = mocker.patch(
-        "lib.webdriver.requests.get",
-        return_value=mock.Mock(
-            status_code=200,
-            json=lambda: {"data": {"searchResults": {"airProducts": [{}]}}},
-        ),
+    mock_replay = mocker.patch(
+        "lib.webdriver.make_request_to_url",
+        return_value={"data": {"searchResults": {"airProducts": [{}]}}},
     )
 
     result = wd.get_public_flight_prices("LGA", "STL", "2026-08-21")
 
     mock_cdp.assert_not_called()
-    mock_get.assert_called_once()
+    mock_replay.assert_called_once()
     assert result["data"]["searchResults"]["airProducts"] == [{}]
 
 
-def test_search_replays_a_captured_post_request(mocker: MockerFixture) -> None:
-    """The pricing call may be a POST with a body rather than a GET; both shapes must work."""
+def test_search_replay_goes_through_make_request_to_url(mocker: MockerFixture) -> None:
+    """
+    The replay must get real retry-with-backoff (like every other endpoint), not a single
+    one-shot request that fails outright on the first transient rejection.
+    """
     wd = _webdriver(mocker)
     wd.search_request = {
         "url": "https://www.southwest.com/api/air-booking/v1/shopping",
@@ -72,21 +74,18 @@ def test_search_replays_a_captured_post_request(mocker: MockerFixture) -> None:
         "headers": {"x-api-key": "test"},
         "body": '{"origin": "LGA"}',
     }
-    mock_post = mocker.patch(
-        "lib.webdriver.requests.post",
-        return_value=mock.Mock(
-            status_code=200,
-            json=lambda: {"data": {"searchResults": {"airProducts": [{}]}}},
-        ),
+    mock_replay = mocker.patch(
+        "lib.webdriver.make_request_to_url",
+        return_value={"data": {"searchResults": {"airProducts": [{}]}}},
     )
 
     result = wd._replay_search_request()
 
-    mock_post.assert_called_once_with(
+    mock_replay.assert_called_once_with(
+        "POST",
         wd.search_request["url"],
-        headers=wd.search_request["headers"],
-        json={"origin": "LGA"},
-        timeout=30,
+        wd.search_request["headers"],
+        {"origin": "LGA"},
     )
     assert result["data"]["searchResults"]["airProducts"] == [{}]
 
@@ -100,10 +99,8 @@ def test_search_replay_raises_cleanly_on_rejection(mocker: MockerFixture) -> Non
         "body": None,
     }
     mocker.patch(
-        "lib.webdriver.requests.get",
-        return_value=mock.Mock(
-            status_code=403, reason="Forbidden", content=b'{"code": 403050700}'
-        ),
+        "lib.webdriver.make_request_to_url",
+        side_effect=RequestError("Forbidden (403)", '{"code": 403050700}'),
     )
 
     with pytest.raises(RequestError):
@@ -118,10 +115,7 @@ def test_search_replay_rejects_a_response_missing_pricing_data(mocker: MockerFix
         "headers": {},
         "body": None,
     }
-    mocker.patch(
-        "lib.webdriver.requests.get",
-        return_value=mock.Mock(status_code=200, json=lambda: {"data": {}}),
-    )
+    mocker.patch("lib.webdriver.make_request_to_url", return_value={"data": {}})
 
     with pytest.raises(DriverTimeoutError):
         wd._replay_search_request()
