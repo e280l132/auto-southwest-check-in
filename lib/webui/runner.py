@@ -31,7 +31,9 @@ def run_check(reservation_config: ReservationConfig, results_store: ResultsStore
     confirmation_number = reservation_config.confirmation_number
     checked_at = datetime.now(timezone.utc).isoformat()
 
-    monitor = ReservationMonitor(reservation_config, lock=None)
+    # The user is watching this check run in their browser, so the results belong on the page
+    # rather than in their inbox. Only the daemon pushes notifications.
+    monitor = ReservationMonitor(reservation_config, lock=None, send_notifications=False)
 
     try:
         monitor.checkin_scheduler.refresh_headers()
@@ -64,7 +66,11 @@ def run_check(reservation_config: ReservationConfig, results_store: ResultsStore
             or "No upcoming flights found for this reservation"
         )
         payload = service.build_check_payload(
-            reservation_config, [], checked_at=checked_at, error=error
+            reservation_config,
+            [],
+            checked_at=checked_at,
+            error=error,
+            transient=monitor.checkin_scheduler.last_fetch_error_is_transient,
         )
         results_store.save_result(confirmation_number, payload)
         return payload

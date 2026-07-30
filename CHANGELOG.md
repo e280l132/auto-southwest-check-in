@@ -37,6 +37,19 @@ logged with a suggested correction instead of being silently ignored
     the account for interactions with Southwest
 - Clean up leftover temporary browser files ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
 - Clean up zombie chromium processes in Docker ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
+- Fall back to Southwest's own reservation lookup when their mobile API refuses to answer
+    - The mobile `view-reservation` endpoint the script has always used now rejects most requests
+    with code `403050700`, while the endpoint the live website uses answers reliably. Measured back
+    to back in the same browser session, the website's endpoint returned 200 on 12/12 requests
+    while the mobile one managed 4/12
+    - When the mobile API rejects a lookup, the script now fills in Southwest's own "Lookup
+    reservation" form and reads the reservation from there, so check-ins still get scheduled
+    - The mobile API is still tried first (with fewer attempts than before, since a rejection is no
+    longer the end of the road) because its response carries a change link and airport names that
+    the website's does not. Reservations retrieved from the website show airport codes rather than
+    names, and their fare checks are skipped rather than failed
+    - Cookies and TLS fingerprint impersonation were both measured and neither helped, so neither
+    was adopted
 - Stop cancelling scheduled check-ins when a reservation lookup fails
     - Southwest intermittently rejects valid reservation lookups with code `403050700`. The request
     reaches their origin and a real browser is rejected at the same rate, so this is a problem on
@@ -60,6 +73,19 @@ backoff cap) without ever retrying again
 - Give fare checks more attempts (7 was frequently exhausted, since the flight change endpoints are
 rejected far more often than reservation lookups) with a lower backoff cap, so the extra attempts
 don't stretch a single fare check out over several minutes
+- Stop sending notifications for checks started from the web UI. The results appear on the page, so
+a manual check no longer pushes fare drops, retrieval errors, or Healthchecks pings. The check-in
+daemon is unaffected and notifies as before
+- Only alert on a transient reservation-retrieval failure once it happens on several consecutive
+retrieval cycles. An isolated failure is expected and self-heals, so it is now logged at the
+`NOTICE` level (filtered out by default), while every other failure — a cancelled reservation, a
+wrong name, a confirmation number that doesn't exist — still alerts the first time it happens
+- Stop suggesting the reservation details are wrong in the web UI when Southwest is the one
+rejecting the request
+- Drop finished web UI fare-check jobs after 30 minutes instead of keeping every job for the
+lifetime of the web server. Jobs still running are never dropped
+- Stop the web UI polling a fare-check job forever, and stop abandoning a running check because a
+single status request failed
 
 ### Upgrading
 - Upgrade the dependencies to the latest versions by running `pip install -r requirements.txt`

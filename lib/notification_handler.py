@@ -30,9 +30,17 @@ logger = get_logger(__name__)
 class NotificationHandler:
     """Handles all notifications that will be sent to the user either via Apprise or the console"""
 
-    def __init__(self, reservation_monitor: AccountMonitor | ReservationMonitor) -> None:
+    def __init__(
+        self,
+        reservation_monitor: AccountMonitor | ReservationMonitor,
+        send_external: bool = True,
+    ) -> None:
         self.reservation_monitor = reservation_monitor
         self.notifications = reservation_monitor.config.notifications
+        # When False, messages are still printed (the console output is the run's record) but
+        # nothing is pushed out to Apprise or Healthchecks. Used for checks the user triggers
+        # from the web UI, where the results are already on their screen.
+        self.send_external = send_external
 
     def send_notification(
         self, body: str, level: NotificationLevel = None, flights: list[Flight] | None = None
@@ -48,6 +56,9 @@ class NotificationHandler:
         # Print console messages with a 12-hour time format
         printed_body = self._format_flight_times(body, flights, False)
         print(printed_body)  # This isn't logged as it contains sensitive information
+
+        if not self.send_external:
+            return
 
         title = "Auto Southwest Check-in Script"
         flights = flights or []
@@ -133,7 +144,12 @@ class NotificationHandler:
         logger.debug("Sending reaccommodated flights notification")
         self.send_notification(flight_reaccommodation_message, NotificationLevel.INFO, flights)
 
-    def failed_reservation_retrieval(self, error: RequestError, confirmation_number: str) -> None:
+    def failed_reservation_retrieval(
+        self,
+        error: RequestError,
+        confirmation_number: str,
+        level: NotificationLevel = NotificationLevel.ERROR,
+    ) -> None:
         if error.southwest_code == TRANSIENT_ORIGIN_REJECTION:
             # Southwest rejected every attempt, but this code means their servers are refusing
             # otherwise-valid lookups, so telling the user to check their details sends them
@@ -151,7 +167,7 @@ class NotificationHandler:
             f"with confirmation number {confirmation_number}. Reason: {error}.\n" + advice
         )
         logger.debug("Sending failed reservation retrieval notification...")
-        self.send_notification(error_message, NotificationLevel.ERROR)
+        self.send_notification(error_message, level)
 
     def timeout_during_retrieval(self, monitor_type: str) -> None:
         message = (
@@ -284,11 +300,11 @@ class NotificationHandler:
         self.send_notification(message, NotificationLevel.INFO, [flight])
 
     def healthchecks_success(self, data: str) -> None:
-        if self.reservation_monitor.config.healthchecks_url is not None:
+        if self.send_external and self.reservation_monitor.config.healthchecks_url is not None:
             requests.post(self.reservation_monitor.config.healthchecks_url, data=data)
 
     def healthchecks_fail(self, data: str) -> None:
-        if self.reservation_monitor.config.healthchecks_url is not None:
+        if self.send_external and self.reservation_monitor.config.healthchecks_url is not None:
             requests.post(self.reservation_monitor.config.healthchecks_url + "/fail", data=data)
 
     def _get_account_name(self) -> str:

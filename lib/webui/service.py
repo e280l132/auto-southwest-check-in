@@ -267,11 +267,14 @@ def build_check_payload(
     *,
     checked_at: str,
     error: str | None = None,
+    transient: bool = False,
 ) -> JSON:
     """
     Build the payload persisted to ResultsStore (and returned to the UI) after running a fare
     check for one reservation. 'error' is set when the check couldn't even retrieve flights
     (e.g. header refresh failed) so the UI can show a clear error instead of an empty list.
+    'transient' marks an error as Southwest rejecting the request rather than anything the user
+    can fix, so the UI can avoid pointing them at their own reservation details.
     """
     paid_points, _source = resolve_paid_points(reservation_config)
     paid_taxes_fees = reservation_config.original_taxes_fees
@@ -279,6 +282,7 @@ def build_check_payload(
     return {
         "checked_at": checked_at,
         "error": error,
+        "transient": transient,
         # Reservations are one-way, so the reservation's paid fare is this flight's paid fare
         "flights": [_result_view(result, paid_points, paid_taxes_fees) for result in results],
     }

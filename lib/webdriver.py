@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import requests
 from sbvirtualdisplay import Display
 from seleniumbase import Driver
 from seleniumbase import config as sb_config
@@ -15,7 +16,7 @@ from seleniumbase.fixtures import page_actions as seleniumbase_actions
 
 from .config import IS_DOCKER
 from .log import LOGS_DIRECTORY, get_logger
-from .utils import DriverTimeoutError, LoginError, random_sleep_duration
+from .utils import DriverTimeoutError, LoginError, RequestError, random_sleep_duration
 
 if TYPE_CHECKING:
     from .checkin_scheduler import CheckInScheduler
@@ -54,6 +55,18 @@ MOBILE_HEADERS_URL = (
 
 # URL prefix for the public air-booking search API — used to identify pricing responses
 SEARCH_RESPONSE_URL = BASE_URL + "/api/air-booking/"
+
+# The website's own reservation lookup. Used as a fallback when the mobile view-reservation API
+# rejects us, which it now does for most requests. Letting the site perform the lookup means the
+# request carries whatever its bot protection expects, without us reconstructing it.
+LOOKUP_RESERVATION_URL = BASE_URL + "/air/manage-reservation/"
+MANAGE_RESERVATION_RESPONSE = "air-manage-reservation/v1/air-manage-reservation/reservations"
+# The form's ids contain dots, which a CSS selector would read as a class
+LOOKUP_CONFIRMATION_FIELD = "input[id='reservationForm.record_locator']"
+LOOKUP_FIRST_NAME_FIELD = "input[id='reservationForm.first_name']"
+LOOKUP_LAST_NAME_FIELD = "input[id='reservationForm.last_name']"
+LOOKUP_SUBMIT_BUTTON = "button#lookupReservation"
+COOKIE_BANNER_BUTTON = "#onetrust-accept-btn-handler"
 
 # Southwest's code when logging in with the incorrect information
 INVALID_CREDENTIALS_CODE = 400518024
@@ -99,6 +112,9 @@ class WebDriver:
         # For public flight price scraping
         self.search_request_id = None
         self.search_response_finished = False
+
+        # For looking a reservation up through the website itself
+        self.reservation_request = None
 
     def _should_take_screenshots(self) -> bool:
         """
@@ -215,6 +231,10 @@ class WebDriver:
             self.checkin_scheduler.headers = self._get_needed_headers(request["headers"])
             self.headers_set = True
 
+        # Only one listener can be registered per CDP event, and this one is always registered, so
+        # the website reservation lookup piggybacks on it rather than adding a second
+        self._capture_reservation_request(request)
+
     def _login_listener(self, data: JSON) -> None:
         """
         Wait for various responses that are needed once the account is logged in. The request IDs
@@ -290,6 +310,89 @@ class WebDriver:
         trips_response = self._get_response_body(driver, self.trips_request_id)
         reservations = trips_response["data"]
         return reservations
+
+    def get_reservation(self, confirmation_number: str, first_name: str, last_name: str) -> JSON:
+        """
+        Look a reservation up the way a person would: fill in Southwest's own lookup form and read
+        the response the site gets back.
+
+        The mobile view-reservation API rejects most of our requests with code 403050700, while
+        this flow answers reliably, so this is the fallback when that API gives up. Returns the
+        'data' object of the site's manage-reservation response.
+        """
+        driver = self._get_driver()
+
+        logger.debug("Looking up reservation through the Southwest website")
+        driver.get(LOOKUP_RESERVATION_URL)
+
+        try:
+            seleniumbase_actions.wait_for_element_visible(
+                driver, LOOKUP_CONFIRMATION_FIELD, timeout=30
+            )
+        except Exception as err:
+            self._quit_driver(driver)
+            raise DriverTimeoutError(f"Reservation lookup form never appeared: {err}") from err
+
+        # The cookie banner renders a moment after the form and covers the submit button, so it
+        # has to be dismissed once it is actually there rather than as soon as the page loads
+        time.sleep(random_sleep_duration(2, 4))
+        driver.click_if_visible(COOKIE_BANNER_BUTTON)
+        self._take_debug_screenshot(driver, "lookup_form.png")
+
+        try:
+            driver.type(LOOKUP_CONFIRMATION_FIELD, confirmation_number)
+            driver.type(LOOKUP_FIRST_NAME_FIELD, first_name)
+            driver.type(LOOKUP_LAST_NAME_FIELD, last_name)
+            driver.click(LOOKUP_SUBMIT_BUTTON)
+        except Exception as err:
+            self._quit_driver(driver)
+            raise DriverTimeoutError(
+                f"Could not submit the reservation lookup form: {err}"
+            ) from err
+
+        self._wait_for_attribute(driver, "reservation_request")
+        self._take_debug_screenshot(driver, "lookup_result.png")
+        self._quit_driver(driver)
+
+        # Reading the response body back out of the browser proves unreliable across the form's
+        # navigation, so repeat the request the site just made. Unlike the mobile API, this
+        # endpoint accepts the replayed request.
+        return self._replay_reservation_request()
+
+    def _capture_reservation_request(self, request: JSON) -> None:
+        if self.reservation_request is None and MANAGE_RESERVATION_RESPONSE in request["url"]:
+            logger.debug("Captured the website's reservation lookup request")
+            self.reservation_request = {
+                "url": request["url"],
+                "headers": {
+                    k: v
+                    for k, v in request["headers"].items()
+                    if k.lower() not in ("content-length", "host")
+                },
+                "body": request.get("postData"),
+            }
+
+    def _replay_reservation_request(self) -> JSON:
+        """
+        Repeat the lookup the website just performed. Every header it sent is passed through:
+        unlike the mobile API, this endpoint rejects a trimmed-down header set outright.
+        """
+        request = self.reservation_request
+        body = json.loads(request["body"]) if request["body"] else None
+
+        response = requests.post(
+            request["url"], headers=request["headers"], json=body, timeout=30
+        )
+        if response.status_code != 200:
+            raise RequestError(
+                f"{response.reason} ({response.status_code})", response.content.decode()
+            )
+
+        reservation = response.json()
+        if "data" not in reservation:
+            raise DriverTimeoutError("Reservation lookup response did not contain a reservation")
+
+        return reservation["data"]
 
     def get_public_flight_prices(self, origin: str, destination: str, date: str) -> JSON:
         """

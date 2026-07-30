@@ -44,13 +44,17 @@ class ReservationMonitor:
         self,
         config: AccountConfig | ReservationConfig,
         lock: multiprocessing.Lock | None = None,
+        send_notifications: bool = True,
     ) -> None:
         self.first_name = config.first_name
         self.last_name = config.last_name
 
         self.config = config
         self.lock = lock
-        self.notification_handler = NotificationHandler(self)
+        # The web UI runs checks on demand while the user watches the results come back on screen,
+        # so it monitors with notifications off. Only the background daemon should be pushing
+        # notifications out to Apprise and Healthchecks.
+        self.notification_handler = NotificationHandler(self, send_external=send_notifications)
         self.checkin_scheduler = CheckInScheduler(self)
 
     def start(self) -> None:
@@ -239,8 +243,13 @@ class ReservationMonitor:
 class AccountMonitor(ReservationMonitor):
     """Monitor an account for newly booked reservations"""
 
-    def __init__(self, config: AccountConfig, lock: multiprocessing.Lock) -> None:
-        super().__init__(config, lock)
+    def __init__(
+        self,
+        config: AccountConfig,
+        lock: multiprocessing.Lock,
+        send_notifications: bool = True,
+    ) -> None:
+        super().__init__(config, lock, send_notifications)
         self.username = config.username
         self.password = config.password
         self.preferred_name = ""

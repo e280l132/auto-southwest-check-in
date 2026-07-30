@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
@@ -25,6 +25,12 @@ if TYPE_CHECKING:
     from .results_store import ResultsStore
 
 JSON = dict[str, Any]
+
+# How long a finished job stays readable before it is dropped. The page only polls a job until it
+# finishes, so this just needs to outlive a poll in flight. Without it, jobs accumulate for the
+# lifetime of the web server.
+JOB_TTL = timedelta(minutes=30)
+
 logger = get_logger(__name__)
 
 
@@ -64,12 +70,33 @@ class JobManager:
 
     def get_job(self, job_id: str) -> JSON | None:
         with self._jobs_lock:
+            self._purge_expired()
             job = self._jobs.get(job_id)
             return dict(job) if job is not None else None
+
+    def _purge_expired(self) -> None:
+        """
+        Drop finished jobs that are past their TTL. Callers must hold _jobs_lock. Unfinished jobs
+        are always kept, however long they run, so a slow check is never lost out from under the
+        page polling it.
+        """
+        cutoff = datetime.now(timezone.utc) - JOB_TTL
+        expired = []
+        for job_id, job in self._jobs.items():
+            finished_at = job.get("finished_at")
+            if finished_at and datetime.fromisoformat(finished_at) < cutoff:
+                expired.append(job_id)
+
+        for job_id in expired:
+            del self._jobs[job_id]
+
+        if expired:
+            logger.debug("Purged %d finished web UI job(s)", len(expired))
 
     def _create_job(self, confirmation_numbers: list[str]) -> str:
         job_id = uuid.uuid4().hex
         with self._jobs_lock:
+            self._purge_expired()
             self._jobs[job_id] = {
                 "status": "queued",
                 "confirmation_numbers": confirmation_numbers,

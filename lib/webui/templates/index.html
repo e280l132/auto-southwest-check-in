@@ -115,7 +115,12 @@
             <p class="checked-at" data-timestamp="{{ r.last_check.checked_at }}">Last checked: {{ r.last_check.checked_at }}</p>
             <p class="notice notice-error">
                 {{ r.last_check.error }}
+                {% if r.last_check.transient %}
+                Southwest is rejecting requests right now. This is usually temporary and nothing to do
+                with your reservation &mdash; try again shortly.
+                {% else %}
                 <a href="{{ url_for('edit_reservation', confirmation_number=r.confirmation_number) }}">Check the name and confirmation number</a>
+                {% endif %}
             </p>
         {% elif not r.last_check.flights %}
             <p class="muted">No upcoming flights found for this reservation.</p>
