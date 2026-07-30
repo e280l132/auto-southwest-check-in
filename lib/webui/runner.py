@@ -33,7 +33,7 @@ def run_check(reservation_config: ReservationConfig, results_store: ResultsStore
 
     # The user is watching this check run in their browser, so the results belong on the page
     # rather than in their inbox. Only the daemon pushes notifications.
-    monitor = ReservationMonitor(reservation_config, lock=None, send_notifications=False)
+    monitor = ReservationMonitor(reservation_config, lock=None, send_external=False)
 
     try:
         monitor.checkin_scheduler.refresh_headers()

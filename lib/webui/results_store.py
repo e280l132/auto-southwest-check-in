@@ -5,9 +5,11 @@ main page has data to show across restarts. Modeled directly on lib/ignore_manag
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -43,11 +45,13 @@ class ResultsStore:
                 self._save(data)
 
     def get_result(self, confirmation_number: str) -> JSON | None:
-        data = self._load()
-        return data.get(confirmation_number)
+        with self._lock:
+            data = self._load()
+            return data.get(confirmation_number)
 
     def get_all(self) -> JSON:
-        return self._load()
+        with self._lock:
+            return self._load()
 
     def clear_all(self) -> None:
         """Drop every cached result, e.g. when the browser loads a fresh (non-post-check) page."""
@@ -68,6 +72,32 @@ class ResultsStore:
         try:
             if self._filepath.is_dir():
                 shutil.rmtree(self._filepath)
-            self._filepath.write_text(json.dumps(data, indent=2))
+
+            # Write to a temp file in the same directory so os.replace is atomic on the same
+            # filesystem, which keeps a crash mid-write (or a concurrent read, now that get_result/
+            # get_all take the same lock) from ever observing a torn write.
+            directory = self._filepath.parent
+            with tempfile.NamedTemporaryFile(
+                "w", dir=directory, prefix=f".{self._filepath.name}.", suffix=".tmp", delete=False
+            ) as tmp:
+                json.dump(data, tmp, indent=2)
+                tmp_path = tmp.name
+
+            try:
+                os.replace(tmp_path, self._filepath)
+            except OSError as err:
+                if err.errno != errno.EBUSY:
+                    raise
+                # self._filepath is likely a single-file bind mount (as config.json can be in
+                # Docker), which the kernel refuses to rename over. Fall back to an in-place,
+                # non-atomic write instead.
+                logger.debug(
+                    "Could not atomically replace %s (resource busy); writing in place instead",
+                    self._filepath,
+                )
+                with open(tmp_path, encoding="utf-8") as tmp_file:
+                    content = tmp_file.read()
+                self._filepath.write_text(content)
+                os.unlink(tmp_path)
         except OSError as err:
             logger.error("Could not save web UI results file: %s", err)

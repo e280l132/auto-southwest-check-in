@@ -169,19 +169,25 @@ class NotificationHandler:
         logger.debug("Sending failed reservation retrieval notification...")
         self.send_notification(error_message, level)
 
-    def timeout_during_retrieval(self, monitor_type: str) -> None:
+    def timeout_during_retrieval(
+        self, monitor_type: str, level: NotificationLevel = NotificationLevel.NOTICE
+    ) -> None:
+        prefix = "Error" if level >= NotificationLevel.ERROR else "Notice"
         message = (
-            f"Notice: Webdriver time out during {monitor_type} retrieval for "
+            f"{prefix}: Webdriver time out during {monitor_type} retrieval for "
             f"{self._get_account_name()}. Skipping reservation retrieval until next interval\n"
         )
-        self.send_notification(message, NotificationLevel.NOTICE)
+        self.send_notification(message, level)
 
-    def too_many_requests_during_login(self) -> None:
+    def too_many_requests_during_login(
+        self, level: NotificationLevel = NotificationLevel.NOTICE
+    ) -> None:
+        prefix = "Error" if level >= NotificationLevel.ERROR else "Notice"
         message = (
-            "Notice: Encountered a Too Many Requests error while logging in for "
+            f"{prefix}: Encountered a Too Many Requests error while logging in for "
             f"{self._get_account_name()}. Skipping reservation retrieval until next interval\n"
         )
-        self.send_notification(message, NotificationLevel.NOTICE)
+        self.send_notification(message, level)
 
     def failed_login(self, error: LoginError) -> None:
         error_message = (

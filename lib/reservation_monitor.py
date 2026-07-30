@@ -5,7 +5,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from .checkin_scheduler import CheckInScheduler
+from .checkin_scheduler import TRANSIENT_FAILURE_ALERT_THRESHOLD, CheckInScheduler
 from .fare_checker import FareChecker
 from .log import get_logger
 from .notification_handler import NotificationHandler
@@ -14,6 +14,7 @@ from .utils import (
     DriverTimeoutError,
     FlightChangeError,
     LoginError,
+    NotificationLevel,
     RequestError,
     get_current_time,
 )
@@ -34,6 +35,20 @@ RETRY_WAIT_SECONDS = 10
 logger = get_logger(__name__)
 
 
+def _escalation_level(failures: int) -> NotificationLevel:
+    """
+    Southwest being briefly unreachable is routine and self-heals next cycle, so an isolated
+    failure is reported at NOTICE (filtered out by the default notification level). Only once it
+    keeps happening across consecutive cycles does it escalate to ERROR — the same policy already
+    used for reservation-lookup failures in CheckInScheduler.
+    """
+    return (
+        NotificationLevel.ERROR
+        if failures >= TRANSIENT_FAILURE_ALERT_THRESHOLD
+        else NotificationLevel.NOTICE
+    )
+
+
 class ReservationMonitor:
     """
     A high-level class responsible for monitoring one or more reservations for
@@ -44,7 +59,7 @@ class ReservationMonitor:
         self,
         config: AccountConfig | ReservationConfig,
         lock: multiprocessing.Lock | None = None,
-        send_notifications: bool = True,
+        send_external: bool = True,
     ) -> None:
         self.first_name = config.first_name
         self.last_name = config.last_name
@@ -54,8 +69,12 @@ class ReservationMonitor:
         # The web UI runs checks on demand while the user watches the results come back on screen,
         # so it monitors with notifications off. Only the background daemon should be pushing
         # notifications out to Apprise and Healthchecks.
-        self.notification_handler = NotificationHandler(self, send_external=send_notifications)
+        self.notification_handler = NotificationHandler(self, send_external=send_external)
         self.checkin_scheduler = CheckInScheduler(self)
+
+        # Consecutive header-refresh timeouts. This process is long-lived (one per reservation),
+        # so this survives across retrieval cycles without needing to be persisted.
+        self.header_refresh_failures = 0
 
     def start(self) -> None:
         """Start each reservation monitor in a separate process to run them in parallel"""
@@ -104,9 +123,13 @@ class ReservationMonitor:
         # Ensure there are valid headers
         try:
             self.checkin_scheduler.refresh_headers()
+            self.header_refresh_failures = 0
         except DriverTimeoutError:
+            self.header_refresh_failures += 1
             logger.warning("Timeout while refreshing headers. Skipping reservation retrieval")
-            self.notification_handler.timeout_during_retrieval("reservation")
+            self.notification_handler.timeout_during_retrieval(
+                "reservation", _escalation_level(self.header_refresh_failures)
+            )
             return False
 
         # Schedule the reservations every time in case a flight is changed or cancelled
@@ -247,12 +270,17 @@ class AccountMonitor(ReservationMonitor):
         self,
         config: AccountConfig,
         lock: multiprocessing.Lock,
-        send_notifications: bool = True,
+        send_external: bool = True,
     ) -> None:
-        super().__init__(config, lock, send_notifications)
+        super().__init__(config, lock, send_external)
         self.username = config.username
         self.password = config.password
         self.preferred_name = ""
+
+        # Consecutive failures to log in / retrieve reservations for this account, whether from a
+        # webdriver timeout or Southwest throttling login attempts. Shared between both, since they
+        # both mean the same thing: this account currently can't be checked.
+        self.login_retrieval_failures = 0
 
     def _check(self) -> bool:
         """
@@ -290,6 +318,7 @@ class AccountMonitor(ReservationMonitor):
                     len(reservations),
                     attempt + 1,
                 )
+                self.login_retrieval_failures = 0
                 return reservations, False
 
             except DriverTimeoutError:
@@ -302,7 +331,10 @@ class AccountMonitor(ReservationMonitor):
                         "Timeout persisted after %d retries. Skipping reservation retrieval",
                         max_retries,
                     )
-                    self.notification_handler.timeout_during_retrieval("account")
+                    self.login_retrieval_failures += 1
+                    self.notification_handler.timeout_during_retrieval(
+                        "account", _escalation_level(self.login_retrieval_failures)
+                    )
 
             except LoginError as err:
                 if err.status_code in [TOO_MANY_REQUESTS_CODE, INTERNAL_SERVER_ERROR_CODE]:
@@ -318,7 +350,10 @@ class AccountMonitor(ReservationMonitor):
                             "Error (status: %d) persists. Skipping reservation retrieval",
                             err.status_code,
                         )
-                        self.notification_handler.too_many_requests_during_login()
+                        self.login_retrieval_failures += 1
+                        self.notification_handler.too_many_requests_during_login(
+                            _escalation_level(self.login_retrieval_failures)
+                        )
                 else:
                     logger.debug("Error logging in. %s. Exiting", err)
                     self.notification_handler.failed_login(err)

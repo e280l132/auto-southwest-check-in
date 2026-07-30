@@ -5,8 +5,9 @@ editing the reservations section of config.json. See README.md "Web UI" for how 
 
 from __future__ import annotations
 
+import functools
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from flask import (
     Flask,
@@ -29,9 +30,25 @@ from .jobs import JobManager
 from .results_store import ResultsStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = get_logger(__name__)
+
+
+def _with_config_lock(fn: Callable[..., Response]) -> Callable[..., Response]:
+    """
+    Serialize an entire route handler behind config_writer.LOCK, so its read-modify-write of
+    config.json's reservations can't interleave with another writer's (a concurrent request, or
+    the job manager's background flight-info caching) and silently lose an update.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Response:
+        with config_writer.LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 
 class ConfigState:
@@ -186,6 +203,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         )
 
     @app.route("/api/reservations/<confirmation_number>/fix-key", methods=["POST"])
+    @_with_config_lock
     def fix_reservation_key(confirmation_number: str) -> Response:
         """
         Rename a known-typo key (e.g. 'checkFares' -> 'check_fares') in place. Only keys listed in
@@ -216,6 +234,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         return _save(reservations, f"Renamed '{old_key}' to '{new_key}'")
 
     @app.route("/api/reservations/<confirmation_number>/paid-fare", methods=["POST"])
+    @_with_config_lock
     def update_paid_fare(confirmation_number: str) -> Response:
         """
         Inline update of just the paid fare, from the flight board. Reservations are one-way, so
@@ -250,6 +269,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         return _save(reservations, f"Updated the paid fare for {confirmation_number}")
 
     @app.route("/api/reservations", methods=["POST"])
+    @_with_config_lock
     def create_reservation() -> Response:
         try:
             reservation = config_writer.build_reservation(request.form)
@@ -269,6 +289,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         return _save(reservations, f"Added reservation {confirmation_number}")
 
     @app.route("/api/reservations/<confirmation_number>", methods=["POST"])
+    @_with_config_lock
     def update_reservation(confirmation_number: str) -> Response:
         _require_reservation(confirmation_number)
 
@@ -296,6 +317,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         return _save(reservations, f"Updated reservation {reservation['confirmationNumber']}")
 
     @app.route("/api/reservations/<confirmation_number>/delete", methods=["POST"])
+    @_with_config_lock
     def delete_reservation(confirmation_number: str) -> Response:
         _require_reservation(confirmation_number)
 

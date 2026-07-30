@@ -110,8 +110,7 @@ class WebDriver:
         self.trips_request_id = None
 
         # For public flight price scraping
-        self.search_request_id = None
-        self.search_response_finished = False
+        self.search_request = None
 
         # For looking a reservation up through the website itself
         self.reservation_request = None
@@ -195,22 +194,37 @@ class WebDriver:
             # already has the correct driver
             driver_version = "keep"
 
-        driver = Driver(
-            binary_location=browser_path,
-            driver_version=driver_version,
-            headed=IS_DOCKER,
-            headless1=not IS_DOCKER,
-            uc_cdp_events=True,
-            undetectable=True,
-            incognito=True,
-        )
+        try:
+            driver = Driver(
+                binary_location=browser_path,
+                driver_version=driver_version,
+                headed=IS_DOCKER,
+                headless1=not IS_DOCKER,
+                uc_cdp_events=True,
+                undetectable=True,
+                incognito=True,
+            )
+        except Exception as err:
+            # seleniumbase's undetected-chromedriver layer has known internal flakiness (e.g.
+            # AttributeError from remove_cdc_props_as_needed() hitting a None list) that has
+            # nothing to do with Southwest and isn't worth distinguishing from a normal browser
+            # startup failure. Converting it to DriverTimeoutError means every caller's existing
+            # "retry/skip this cycle" handling covers it too, instead of it crashing the whole
+            # monitor process uncaught.
+            raise DriverTimeoutError(f"Failed to start the browser: {err}") from err
+
         logger.debug("Using browser version: %s", driver.caps["browserVersion"])
 
         driver.add_cdp_listener("Network.requestWillBeSent", self._headers_listener)
 
         # Load the login page to get valid headers
         logger.debug("Loading mobile Southwest login page (this may take a moment)")
-        driver.get(MOBILE_LOGIN_URL)
+        try:
+            driver.get(MOBILE_LOGIN_URL)
+        except Exception as err:
+            self._quit_driver(driver)
+            raise DriverTimeoutError(f"Failed to load the mobile login page: {err}") from err
+
         self._take_debug_screenshot(driver, "after_page_load.png")
 
         return driver
@@ -232,8 +246,10 @@ class WebDriver:
             self.headers_set = True
 
         # Only one listener can be registered per CDP event, and this one is always registered, so
-        # the website reservation lookup piggybacks on it rather than adding a second
+        # the website reservation lookup and public search both piggyback on it rather than each
+        # adding their own
         self._capture_reservation_request(request)
+        self._capture_search_request(request)
 
     def _login_listener(self, data: JSON) -> None:
         """
@@ -274,7 +290,12 @@ class WebDriver:
         """
         self._click_login_button(driver)
         self._wait_for_attribute(driver, "login_request_id")
-        login_response = self._get_response_body(driver, self.login_request_id)
+
+        try:
+            login_response = self._get_response_body(driver, self.login_request_id)
+        except Exception as err:
+            self._quit_driver(driver)
+            raise DriverTimeoutError(f"Failed to retrieve login response body: {err}") from err
 
         # Handle login errors
         if self.login_status_code != 200:
@@ -307,7 +328,13 @@ class WebDriver:
         that are flights.
         """
         self._wait_for_attribute(driver, "trips_request_id")
-        trips_response = self._get_response_body(driver, self.trips_request_id)
+
+        try:
+            trips_response = self._get_response_body(driver, self.trips_request_id)
+        except Exception as err:
+            self._quit_driver(driver)
+            raise DriverTimeoutError(f"Failed to retrieve trips response body: {err}") from err
+
         reservations = trips_response["data"]
         return reservations
 
@@ -396,15 +423,14 @@ class WebDriver:
 
     def get_public_flight_prices(self, origin: str, destination: str, date: str) -> JSON:
         """
-        Navigate to the public Southwest flight search page and capture the API response
-        that contains flight pricing. Returns the raw JSON response body.
+        Navigate to the public Southwest flight search page and capture the pricing request the
+        page itself makes. Returns the raw JSON response body.
 
-        This is used as a fallback for companion-pass flights where the change-flow
-        API is blocked — the public search has no knowledge of companion restrictions.
+        This is used as a fallback for flights where the change-flow API is unavailable — either
+        because of a companion pass, or because the reservation came from the website lookup, which
+        carries no change link. The public search has no knowledge of companion restrictions.
         """
         driver = self._get_driver()
-        driver.add_cdp_listener("Network.responseReceived", self._search_listener)
-        driver.add_cdp_listener("Network.loadingFinished", self._search_finished_listener)
 
         search_url = SEARCH_PAGE_URL.format(origin=origin, destination=destination, date=date)
         logger.debug(
@@ -413,67 +439,67 @@ class WebDriver:
         driver.get(search_url)
         self._take_debug_screenshot(driver, "search_page.png")
 
-        self._wait_for_attribute(driver, "search_request_id")
-        # The response body isn't available via CDP until the resource has fully finished
-        # loading. Fetching it right after "Network.responseReceived" can race the browser
-        # and raise "No resource with given identifier found", so wait for
-        # "Network.loadingFinished" on the same request first.
-        self._wait_for_attribute(driver, "search_response_finished")
-
-        try:
-            response = self._get_response_body(driver, self.search_request_id)
-        except Exception as err:
-            self._quit_driver(driver)
-            raise DriverTimeoutError(
-                f"Failed to retrieve public search response body: {err}"
-            ) from err
-
+        # _wait_for_attribute quits the driver itself and raises if the request never shows up
+        self._wait_for_attribute(driver, "search_request")
         self._quit_driver(driver)
+
+        # Reading the response body back out of the browser via CDP races the page's lifecycle and
+        # intermittently throws "No resource with given identifier found". Repeating the request
+        # the page itself just made avoids that race entirely.
+        return self._replay_search_request()
+
+    def _capture_search_request(self, request: JSON) -> None:
+        """
+        Capture the first request that looks like the flight search pricing call (specific to the
+        air-booking shopping endpoint), regardless of whether it's a GET with query parameters or a
+        POST with a JSON body — the exact shape isn't assumed, just repeated verbatim later.
+        """
+        url = request["url"]
+
+        if SEARCH_RESPONSE_URL in url:
+            logger.debug("Public search API request observed: %s %s", request.get("method"), url)
+
+        if self.search_request is None and SEARCH_RESPONSE_URL in url and "shopping" in url:
+            logger.debug("Captured the public flight search request")
+            self.search_request = {
+                "url": url,
+                "method": request.get("method", "GET"),
+                "headers": {
+                    k: v
+                    for k, v in request["headers"].items()
+                    if k.lower() not in ("content-length", "host")
+                },
+                "body": request.get("postData"),
+            }
+
+    def _replay_search_request(self) -> JSON:
+        """Repeat the pricing request the search page just made."""
+        request = self.search_request
+        body = json.loads(request["body"]) if request["body"] else None
+
+        if request["method"].upper() == "POST":
+            response = requests.post(
+                request["url"], headers=request["headers"], json=body, timeout=30
+            )
+        else:
+            response = requests.get(request["url"], headers=request["headers"], timeout=30)
+
+        if response.status_code != 200:
+            raise RequestError(
+                f"{response.reason} ({response.status_code})", response.content.decode()
+            )
+
+        result = response.json()
 
         # Validate that the captured response contains flight pricing data
         try:
-            response["data"]["searchResults"]["airProducts"]
+            result["data"]["searchResults"]["airProducts"]
         except (KeyError, TypeError) as err:
             raise DriverTimeoutError(
                 f"Public search response missing expected pricing data: {err}"
             ) from err
 
-        return response
-
-    def _search_listener(self, data: JSON) -> None:
-        """
-        Capture the flight search API response from the public Southwest search page.
-        Logs all SW API responses at debug level for discovery, and records the first
-        response that looks like flight search results (contains 'products' or 'flights'
-        in the URL path).
-        """
-        response = data["params"]["response"]
-        url = response["url"]
-
-        # Log all SW API responses at debug level to help identify the right endpoint
-        if SEARCH_RESPONSE_URL in url:
-            logger.debug(
-                "Public search API response: %s %s",
-                response.get("status"),
-                url,
-            )
-
-        # Capture the first air-booking shopping response (specific to the pricing endpoint)
-        if self.search_request_id is None and SEARCH_RESPONSE_URL in url and "shopping" in url:
-            logger.debug("Captured flight search response from: %s", url)
-            self.search_request_id = data["params"]["requestId"]
-
-    def _search_finished_listener(self, data: JSON) -> None:
-        """
-        Mark the captured search response as finished loading once its
-        "Network.loadingFinished" event arrives, meaning the response body is
-        safe to fetch via CDP.
-        """
-        if (
-            self.search_request_id is not None
-            and data["params"]["requestId"] == self.search_request_id
-        ):
-            self.search_response_finished = True
+        return result
 
     def _get_response_body(self, driver: Driver, request_id: str) -> JSON:
         response = driver.execute_cdp_cmd("Network.getResponseBody", {"requestId": request_id})

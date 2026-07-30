@@ -2,9 +2,10 @@
 
 import json
 
+import pytest
 from pytest_mock import MockerFixture
 
-from lib.config import GlobalConfig, NotificationConfig
+from lib.config import ConfigError, GlobalConfig, NotificationConfig
 from lib.utils import CheckFaresOption, NotificationLevel
 
 
@@ -127,3 +128,44 @@ def test_config(mocker: MockerFixture) -> None:
     assert_notification_config_matches(
         reservation_two.notifications[2], "test2.com", NotificationLevel.INFO, False
     )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("retrieval_interval", False),
+        ("retrieval_interval", True),
+        ("ignoreServerPort", False),
+        ("ignoreServerPort", True),
+    ],
+)
+def test_bool_is_rejected_for_integer_only_global_settings(
+    mocker: MockerFixture, key: str, value: bool
+) -> None:
+    """
+    isinstance(True, int) is True in Python, so these were silently coerced instead of rejected.
+    'retrieval_interval: false' in particular silently disabled monitoring entirely (0 hours) with
+    no warning at all.
+    """
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({key: value}))
+
+    config = GlobalConfig()
+    with pytest.raises(ConfigError):
+        config.initialize_or_raise()
+
+
+@pytest.mark.parametrize("key", ["companionFarePoints", "originalFarePoints"])
+@pytest.mark.parametrize("value", [False, True])
+def test_bool_is_rejected_for_integer_only_reservation_settings(
+    mocker: MockerFixture, key: str, value: bool
+) -> None:
+    config = {
+        "reservations": [
+            {"confirmationNumber": "TEST", "firstName": "Winston", "lastName": "Smith", key: value}
+        ]
+    }
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps(config))
+
+    global_config = GlobalConfig()
+    with pytest.raises(ConfigError):
+        global_config.initialize_or_raise()

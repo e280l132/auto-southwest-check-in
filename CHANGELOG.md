@@ -31,6 +31,43 @@ to run only the UI)
 logged with a suggested correction instead of being silently ignored
 
 ### Bug Fixes
+- Fix a public fare search failure ("No resource with given identifier found") caused by reading
+the search response body back out of the browser via CDP, which races the page's lifecycle. The
+search now captures the request the page itself makes and repeats it directly, the same fix already
+used for the website reservation-lookup fallback. The same hardening was applied to two other
+CDP body-reads (account login, upcoming trips) that could previously crash the whole account
+monitor process uncaught and leak the browser on the same kind of race
+- Stop one malformed flight on a reservation from crashing the entire monitor process; it's now
+logged and skipped so the rest of the reservation's flights are unaffected
+- Catch unexpected errors during check-in (not just the two error types it previously watched for)
+so a check-in failure always notifies instead of silently vanishing
+- Reject `true`/`false` for `retrieval_interval`, `ignoreServerPort`, `companionFarePoints`, and
+`originalFarePoints` instead of silently coercing them to `0`/`1`. `retrieval_interval: false` in
+particular silently disabled monitoring entirely with no warning
+- Apply the same "escalate only after repeated failures" notification policy already used for
+reservation lookups to account login timeouts/throttling and to a reservation monitor's
+header-refresh timeout, so a persistently broken login isn't silently invisible forever at the
+default notification level
+- Fix a stored XSS in the reservation edit page: the confirmation number was interpolated into an
+inline `onsubmit` JS string, which HTML-escaping doesn't protect against. The delete-confirmation
+dialog now reads the value from a data attribute in JavaScript instead of embedding it as script
+source
+- Fix a reflected XSS in the ignore-link server, which interpolated query-string values directly
+into its HTML response with no escaping
+- Take a lock for `results_store.py` reads (previously only writes were locked) and write it
+atomically (temp file + replace) like `config_writer.py` already does, so a crash mid-write or a
+concurrent read can no longer see a corrupted or torn file
+- Serialize every web UI route that reads-modifies-writes `config.json`'s reservations behind a
+lock, closing a race where two concurrent edits (or an edit racing the job manager's background
+flight-info caching) could silently lose one of the changes
+- Persist a failed reservation's result during a "check all" job the same way every other failure
+path does; it previously only lived in the transient in-memory job list and disappeared once the
+job aged out
+- Cache the airport-timezone file for the life of the process instead of re-reading and
+re-parsing it from disk on every single flight
+- Fetch the current time once per retrieval cycle and share it across every reservation being
+checked, instead of each reservation making its own separate NTP round trip (each up to 20
+seconds if NTP is unreachable)
 - Always use first name (instead of preferred name) for scheduling flights and check-ins
 ([#385](https://github.com/jdholtz/auto-southwest-check-in/issues/385))
     - The script will still use the preferred name for notifications, but will use the first name of

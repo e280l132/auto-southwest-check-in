@@ -169,7 +169,9 @@ class Config:
             self.retrieval_interval = config["retrieval_interval"]
             logger.debug("Setting retrieval interval to %s hours", self.retrieval_interval)
 
-            if not isinstance(self.retrieval_interval, int):
+            if not isinstance(self.retrieval_interval, int) or isinstance(
+                self.retrieval_interval, bool
+            ):
                 raise ConfigError("'retrieval_interval' must be an integer")
 
             if self.retrieval_interval < 0:
@@ -185,7 +187,7 @@ class Config:
         if "ignoreServerPort" in config:
             ignore_server_port = config["ignoreServerPort"]
 
-            if not isinstance(ignore_server_port, int):
+            if not isinstance(ignore_server_port, int) or isinstance(ignore_server_port, bool):
                 raise ConfigError("'ignoreServerPort' must be an integer")
 
             if not (1 <= ignore_server_port <= 65535):
@@ -500,7 +502,9 @@ class ReservationConfig(Config):
 
         if "companionFarePoints" in config:
             companion_fare_points = config["companionFarePoints"]
-            if not isinstance(companion_fare_points, int):
+            if not isinstance(companion_fare_points, int) or isinstance(
+                companion_fare_points, bool
+            ):
                 raise ConfigError("'companionFarePoints' must be an integer")
             if companion_fare_points <= 0:
                 raise ConfigError("'companionFarePoints' must be a positive integer")
@@ -509,7 +513,9 @@ class ReservationConfig(Config):
 
         if "originalFarePoints" in config:
             original_fare_points = config["originalFarePoints"]
-            if not isinstance(original_fare_points, int):
+            if not isinstance(original_fare_points, int) or isinstance(
+                original_fare_points, bool
+            ):
                 raise ConfigError("'originalFarePoints' must be an integer")
             if original_fare_points <= 0:
                 raise ConfigError("'originalFarePoints' must be a positive integer")

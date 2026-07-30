@@ -103,3 +103,28 @@ def test_check_in(
     # Ensure all flights have been checked in
     checked_in_flights = mock_successful_checkin.call_args[0][0]["flights"]
     assert len(checked_in_flights) == 2 if same_day_flight else 1
+
+
+def test_unexpected_response_shape_notifies_instead_of_crashing(
+    requests_mock: RequestMocker, handler: CheckInHandler
+) -> None:
+    """
+    Before this fix, only AirportCheckInError/RequestError were caught around check-in. An
+    unexpected response shape (Southwest changing their API, a malformed reservation from the
+    website fallback) raised a bare KeyError that killed this flight's check-in process silently,
+    with no notification at all -- for what is the script's core feature.
+    """
+    handler.first_name = "Garry"
+    handler.last_name = "Lin"
+
+    # Missing "checkInViewReservationPage" entirely, unlike anything Southwest actually returns
+    requests_mock.post(
+        BASE_URL + CHECKIN_URL + "TEST",
+        [{"json": {"unexpected": "shape"}, "status_code": 200}],
+    )
+
+    handler._check_in()
+
+    handler.notification_handler.failed_checkin.assert_called_once()
+    err = handler.notification_handler.failed_checkin.call_args[0][0]
+    assert isinstance(err, KeyError)

@@ -13,7 +13,7 @@ from unittest import mock
 import pytest
 from pytest_mock import MockerFixture
 
-from lib.checkin_scheduler import RESERVATION_MAX_ATTEMPTS
+from lib.checkin_scheduler import RESERVATION_MAX_ATTEMPTS, CheckInScheduler
 from lib.config import GlobalConfig
 from lib.fare_checker import FareChecker, is_companion_flight
 from lib.flight import Flight
@@ -211,7 +211,7 @@ def test_public_search_uses_the_right_paid_fare(mocker: MockerFixture) -> None:
             }
         ]
     )
-    monitor = ReservationMonitor(config.reservations[0], lock=None, send_notifications=False)
+    monitor = ReservationMonitor(config.reservations[0], lock=None, send_external=False)
     checker = FareChecker(monitor)
     delegate = mocker.patch.object(checker, "_check_companion_fare_via_webdriver")
     flight = mocker.Mock()
@@ -244,3 +244,36 @@ def test_a_solo_reservation_is_not_treated_as_a_companion_one() -> None:
     info = translate_manage_reservation(WEBSITE_DATA)
 
     assert info["hasCompanion"] is False
+
+
+def test_a_malformed_bound_is_skipped_not_fatal(mocker: MockerFixture) -> None:
+    """
+    Before this fix, one bad bound (an unexpected shape from Southwest, or a translated reservation
+    missing a field) raised uncaught out of _get_flights and killed the entire monitor process --
+    taking down every other flight on the reservation with it.
+    """
+    config = GlobalConfig()
+    config.create_reservation_config(
+        [{"confirmationNumber": "TEST", "firstName": "Berkant", "lastName": "Marika"}]
+    )
+    monitor = ReservationMonitor(config.reservations[0], lock=None, send_external=False)
+    scheduler: CheckInScheduler = monitor.checkin_scheduler
+
+    good_bound = translate_manage_reservation(WEBSITE_DATA)["bounds"][0]
+    broken_bound = {"origination_airport_code": "STL"}  # missing everything else
+
+    mocker.patch.object(
+        scheduler,
+        "_get_reservation_info",
+        return_value=({"bounds": [broken_bound, good_bound], "_links": {}}, True),
+    )
+    mocker.patch(
+        "lib.checkin_scheduler.get_current_time",
+        return_value=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+
+    flights, is_authoritative = scheduler._get_flights("TEST")
+
+    assert is_authoritative is True
+    assert len(flights) == 1
+    assert flights[0].flight_number == "893"

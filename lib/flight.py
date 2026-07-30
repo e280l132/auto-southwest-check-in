@@ -11,6 +11,27 @@ JSON = dict[str, Any]
 
 TZ_FILE_PATH = "utils/airport_timezones.json"
 
+# The airport-timezone map is a static file bundled with the code, re-read and re-parsed from disk
+# on every single Flight construction. In a long-running daemon process, cache it for the life of
+# the process instead. Module-level rather than per-instance since Flight objects don't persist
+# across retrieval cycles. clear_airport_timezone_cache() exists for tests, which mock
+# Path.read_text with different timezone data per test and need a clean slate each time.
+_airport_timezones: JSON | None = None
+
+
+def clear_airport_timezone_cache() -> None:
+    global _airport_timezones
+    _airport_timezones = None
+
+
+def _load_airport_timezones() -> JSON:
+    global _airport_timezones
+    if _airport_timezones is None:
+        project_dir = Path(__file__).parents[1]
+        tz_file = project_dir / TZ_FILE_PATH
+        _airport_timezones = json.loads(tz_file.read_text())
+    return _airport_timezones
+
 
 class Flight:
     """
@@ -88,12 +109,8 @@ class Flight:
         self.departure_time = self._convert_to_utc(flight_date, airport_timezone)
 
     def _get_airport_timezone(self, airport_code: str) -> Any:
-        project_dir = Path(__file__).parents[1]
-        tz_file = project_dir / TZ_FILE_PATH
-        airport_timezones = json.loads(tz_file.read_text())
-
-        airport_timezone = zoneinfo.ZoneInfo(airport_timezones[airport_code])
-        return airport_timezone
+        airport_timezones = _load_airport_timezones()
+        return zoneinfo.ZoneInfo(airport_timezones[airport_code])
 
     def _convert_to_utc(self, flight_date: str, airport_timezone: Any) -> datetime:
         flight_date = datetime.strptime(flight_date, "%Y-%m-%d %H:%M")

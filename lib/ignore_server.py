@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING
@@ -48,17 +49,17 @@ def start_ignore_server(port: int, ignore_manager: IgnoreManager, token: str | N
 
             if parsed.path == "/ignore" and conf and flight_date and flight:
                 ignore_manager.ignore_flight(conf, flight_date, flight)
-                display_flight = flight.replace("\u200b", "")
+                display_flight = html.escape(flight.replace("\u200b", ""))
                 self._respond(
-                    f"Done! Flight {display_flight} on {flight_date} "
-                    f"for reservation {conf} will no longer appear in fare alerts."
+                    f"Done! Flight {display_flight} on {html.escape(flight_date)} "
+                    f"for reservation {html.escape(conf)} will no longer appear in fare alerts."
                 )
 
             elif parsed.path == "/ignore-all" and conf and flight_date:
                 ignore_manager.ignore_all_day(conf, flight_date)
                 self._respond(
-                    f"Done! All cheaper alternate flights on {flight_date} "
-                    f"for reservation {conf} will no longer appear in fare alerts."
+                    f"Done! All cheaper alternate flights on {html.escape(flight_date)} "
+                    f"for reservation {html.escape(conf)} will no longer appear in fare alerts."
                 )
 
             else:

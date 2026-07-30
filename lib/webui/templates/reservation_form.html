@@ -117,10 +117,10 @@
 </form>
 
 {% if reservation %}
-<form class="danger-zone"
+<form class="danger-zone delete-reservation-form"
       method="post"
       action="{{ url_for('delete_reservation', confirmation_number=conf) }}"
-      onsubmit="return confirm('Remove {{ conf }} from config.json? Its saved fare results will also be cleared.');">
+      data-confirmation="{{ conf }}">
     <button type="submit" class="btn btn-danger">Remove this flight</button>
     <span class="hint">Removes it from config.json and clears its cached results.</span>
 </form>

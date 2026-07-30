@@ -15,6 +15,7 @@ import errno
 import json
 import os
 import tempfile
+import threading
 from typing import TYPE_CHECKING, Any
 
 from ..config import ReservationConfig
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
 JSON = dict[str, Any]
 
 logger = get_logger(__name__)
+
+# Guards every read-modify-write of config.json's reservations. Flask runs with threaded=True and
+# a background job (JobManager's auto flight-info caching) writes independently of request
+# threads, so two overlapping "read current reservations, change one, write them all back" cycles
+# can otherwise race: the second writer's read happens before the first writer's replace lands, so
+# the first writer's change is silently lost. Callers that read reservations, mutate them, and
+# write them back must hold this lock for the whole sequence, not just the write.
+LOCK = threading.Lock()
 
 # The only reservation keys the web UI is allowed to write
 EDITABLE_FIELDS = (
@@ -131,19 +140,20 @@ def update_cached_flight(
         "cachedLocalDepartureDate": local_departure_date,
     }
 
-    reservations = read_reservations(config_path)
-    changed = False
-    updated = []
-    for reservation in reservations:
-        if reservation.get("confirmationNumber") == confirmation_number and any(
-            reservation.get(key) != value for key, value in new_values.items()
-        ):
-            reservation = {**reservation, **new_values}
-            changed = True
-        updated.append(reservation)
+    with LOCK:
+        reservations = read_reservations(config_path)
+        changed = False
+        updated = []
+        for reservation in reservations:
+            if reservation.get("confirmationNumber") == confirmation_number and any(
+                reservation.get(key) != value for key, value in new_values.items()
+            ):
+                reservation = {**reservation, **new_values}
+                changed = True
+            updated.append(reservation)
 
-    if changed:
-        write_reservations(config_path, updated)
+        if changed:
+            write_reservations(config_path, updated)
 
     return changed
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .checkin_handler import CheckInHandler
@@ -64,13 +64,20 @@ class CheckInScheduler:
         flights are scheduled and any flights now longer found are removed.
         """
         flights = []
+        # Fetched once for the whole cycle rather than once per reservation inside _get_flights --
+        # an account with many reservations was making that many redundant NTP round trips (each
+        # up to 20s if NTP is unreachable) for what should be one "now" per cycle.
+        current_utc_time = get_current_time()
+
         # Southwest intermittently rejects reservation lookups even when the reservation is fine.
         # A failed lookup returns no flights, which is indistinguishable from a reservation whose
         # flights are gone, so track it explicitly: scheduled check-ins must not be torn down just
         # because Southwest was unreachable this cycle.
         all_retrievals_authoritative = True
         for confirmation_number in confirmation_numbers:
-            reservation_flights, is_authoritative = self._get_flights(confirmation_number)
+            reservation_flights, is_authoritative = self._get_flights(
+                confirmation_number, current_utc_time
+            )
             flights.extend(reservation_flights)
             all_retrievals_authoritative &= is_authoritative
 
@@ -89,25 +96,42 @@ class CheckInScheduler:
         """
         return self._get_flights(confirmation_number)[0]
 
-    def _get_flights(self, confirmation_number: str) -> tuple[list[Flight], bool]:
+    def _get_flights(
+        self, confirmation_number: str, current_utc_time: datetime | None = None
+    ) -> tuple[list[Flight], bool]:
         """
         Get all flights booked on a single reservation.
 
         Also returns whether the result is authoritative, i.e. whether Southwest actually told us
         the current state of the reservation. An empty list with `False` means the lookup failed,
         not that the reservation is empty.
+
+        current_utc_time lets a caller processing several reservations in one cycle (see
+        process_reservations) fetch "now" once and share it, rather than each reservation making
+        its own NTP round trip. Callers checking a single reservation on their own can leave it
+        unset to fetch a fresh timestamp, as before.
         """
         reservation_info, is_authoritative = self._get_reservation_info(confirmation_number)
         bounds = reservation_info.get("bounds", [])
         logger.debug("%d flights found under current reservation", len(bounds))
 
-        current_utc_time = get_current_time()
+        if current_utc_time is None:
+            current_utc_time = get_current_time()
         flights = []
         # If multiple flights are under the same confirmation number, it will schedule all checkins
         for flight_info in bounds:
-            # For simplicity, reservation_info is only cached in the Flight constructor even though
-            # it can get the flight_info
-            flight = Flight(flight_info, reservation_info, confirmation_number)
+            try:
+                # For simplicity, reservation_info is only cached in the Flight constructor even
+                # though it can get the flight_info
+                flight = Flight(flight_info, reservation_info, confirmation_number)
+            except (KeyError, ValueError, TypeError) as err:
+                # An unexpected shape in one bound (e.g. Southwest changes their response, or a
+                # translated reservation is missing a field) must not take down every other flight
+                # on this reservation, let alone the whole monitor process
+                logger.error(
+                    "Could not parse a flight on reservation %s: %s", confirmation_number, err
+                )
+                continue
 
             if flight.departure_time > current_utc_time:
                 self._set_same_day_flight(flight, flights)

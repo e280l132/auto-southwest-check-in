@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
-from . import config_writer, runner
+from . import config_writer, runner, service
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -176,11 +176,21 @@ class JobManager:
                         job_id,
                         reservation_config.confirmation_number,
                     )
-                    results[reservation_config.confirmation_number] = {
-                        "checked_at": datetime.now(timezone.utc).isoformat(),
-                        "error": str(err),
-                        "flights": [],
-                    }
+                    # Build this through the same helper runner.run_check's own failure paths use,
+                    # so it doesn't drift from the canonical payload shape (it was previously
+                    # missing the 'transient' key), and persist it to results_store like every
+                    # other failure path -- otherwise this failure only lives in the job dict,
+                    # which is purged after JOB_TTL and isn't what the main page reads.
+                    payload = service.build_check_payload(
+                        reservation_config,
+                        [],
+                        checked_at=datetime.now(timezone.utc).isoformat(),
+                        error=str(err),
+                    )
+                    self._results_store.save_result(
+                        reservation_config.confirmation_number, payload
+                    )
+                    results[reservation_config.confirmation_number] = payload
                     error = error or str(err)
 
             self._update_job(

@@ -155,6 +155,13 @@ class CheckInHandler:
             logger.debug("Failed to check in. Error: %s. Exiting", err)
             self.notification_handler.failed_checkin(err, self.flight)
             return
+        except Exception as err:
+            # This is the core feature of the script. An unexpected response shape (Southwest
+            # changing their API, a malformed reservation from the website fallback, etc.) must
+            # still reach the user instead of silently killing this flight's check-in process.
+            logger.exception("Failed to check in due to an unexpected error")
+            self.notification_handler.failed_checkin(err, self.flight)
+            return
 
         self.notification_handler.successful_checkin(
             reservation["checkInConfirmationPage"], self.flight
