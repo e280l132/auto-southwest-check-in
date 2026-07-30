@@ -64,6 +64,10 @@ def _translate_bound(bound: JSON) -> JSON:
         "flights": [{"number": segment["flight_number"]} for segment in segments],
         "departureDate": departure_date,
         "departureTime": departure_time,
+        # The fare checker uses this to pick the matching price out of a public search. This
+        # payload calls it the fare family; if it doesn't line up with a searched fare, the check
+        # reports no price rather than the wrong one.
+        "fareProductDetails": {"fareProductId": segments[0].get("fare_family")},
     }
 
 

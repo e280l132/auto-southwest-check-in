@@ -51,11 +51,8 @@ class FareChecker:
         try:
             flight_price = self._get_flight_price(flight)
         except FlightChangeError as err:
-            if self._is_companion_flight(flight) and not self._is_reaccommodated(flight):
-                companion_fare_points = getattr(
-                    self.reservation_monitor.config, "companion_fare_points", None
-                )
-                return self._check_companion_fare_via_webdriver(flight, companion_fare_points)
+            if not self._is_reaccommodated(flight):
+                return self._check_fare_via_public_search(flight)
             raise err
 
         price_info = f"{flight_price['amount']:+,} {flight_price['currencyCode']}"
@@ -337,11 +334,14 @@ class FareChecker:
             board, fare_type = self._get_change_board(flight)
             alternatives = self._cheaper_from_board(board, flight)
         except FlightChangeError as err:
-            if self._is_companion_flight(flight) and not self._is_reaccommodated(flight):
-                companion_fare_points = getattr(
-                    self.reservation_monitor.config, "companion_fare_points", None
-                )
-                return self._check_companion_fare_via_webdriver(flight, companion_fare_points)
+            # A reaccommodated flight can already be changed for free, so there is nothing to
+            # compare. Anything else means Southwest's change API is unavailable to us for this
+            # reservation — a companion pass blocks it, or the reservation came from the website
+            # lookup, which carries no change link. The public search still prices the route, so
+            # fall back to that instead of reporting nothing.
+            if not self._is_reaccommodated(flight):
+                return self._check_fare_via_public_search(flight)
+
             logger.info("Skipping alternate fare check for flight %s: %s", conf, err)
             return self._make_result(flight, status="skipped", message=str(err))
         except Exception as err:
@@ -409,6 +409,27 @@ class FareChecker:
         flight_number = "\u200b/\u200b".join(f["number"].removeprefix("WN") for f in flights)
         return flight_number == flight.flight_number
 
+    def _paid_fare_setting_name(self, flight: Flight) -> str:
+        """The config setting holding what was paid, which differs for companion reservations."""
+        return "companionFarePoints" if self._is_companion_flight(flight) else "originalFarePoints"
+
+    def _check_fare_via_public_search(self, flight: Flight) -> FareCheckResult:
+        """
+        Price a flight through Southwest's public search, for reservations their change API won't
+        answer for.
+
+        Note this prices the route as a new booking rather than as a change to this reservation,
+        so it answers "what does this flight cost today" against what was paid, not "what would
+        Southwest credit me". Which figure was paid depends on how the reservation was booked.
+        """
+        config = self.reservation_monitor.config
+        if self._is_companion_flight(flight):
+            paid_points = getattr(config, "companion_fare_points", None)
+        else:
+            paid_points = getattr(config, "original_fare_points", None)
+
+        return self._check_companion_fare_via_webdriver(flight, paid_points)
+
     def _check_companion_fare_via_webdriver(
         self, flight: Flight, companion_fare_points: int | None
     ) -> FareCheckResult:
@@ -432,7 +453,7 @@ class FareChecker:
 
         if departure_date is None:
             logger.error(
-                "Companion webdriver fare check failed for %s: could not determine departure date.",
+                "Public search fare check failed for %s: could not determine departure date.",
                 flight.confirmation_number,
             )
             self._log_companion_unavailable(
@@ -449,7 +470,7 @@ class FareChecker:
         destination = flight.destination_airport_code
 
         logger.info(
-            "Checking companion fare for flight %s via public search (route: %s→%s on %s)",
+            "Checking fare for flight %s via public search (route: %s→%s on %s)",
             flight.confirmation_number,
             origin,
             destination,
@@ -473,7 +494,7 @@ class FareChecker:
                     )
                 else:
                     logger.error(
-                        "Companion webdriver fare check timed out for %s after %d attempts.",
+                        "Public search fare check timed out for %s after %d attempts.",
                         flight.confirmation_number,
                         max_attempts,
                     )
@@ -488,7 +509,7 @@ class FareChecker:
                     )
             except Exception as err:
                 logger.error(
-                    "Companion webdriver fare check failed for %s: %s",
+                    "Public search fare check failed for %s: %s",
                     flight.confirmation_number,
                     err,
                 )
@@ -536,7 +557,7 @@ class FareChecker:
 
         if fare_type is None:
             logger.error(
-                "Companion webdriver fare check failed for %s: could not determine fare type.",
+                "Public search fare check failed for %s: could not determine fare type.",
                 flight.confirmation_number,
             )
             return self._make_result(
@@ -556,7 +577,7 @@ class FareChecker:
 
         if lowest_points is None:
             logger.info(
-                "Companion fare check for flight %s: no %s points fare available "
+                "Fare check for flight %s: no %s points fare available "
                 "in public search results.",
                 flight.confirmation_number,
                 fare_type,
@@ -576,15 +597,17 @@ class FareChecker:
                 return self._check_companion_alternate_fares(
                     flight, cards, fare_type, companion_fare_points, departure_date
                 )
+            setting = self._paid_fare_setting_name(flight)
             logger.info(
-                "Companion alternate fare check for flight %s: set 'companionFarePoints' "
+                "Alternate fare check for flight %s: set '%s' "
                 "in config to enable same_day_smart alternate fare checking.",
                 flight.confirmation_number,
+                setting,
             )
             return self._make_result(
                 flight,
                 status="unavailable",
-                message="Set 'companionFarePoints' in config to enable same_day_smart checking",
+                message=f"Set '{setting}' in config to enable same_day_smart checking",
                 current_points=lowest_points,
                 board=board,
                 fare_type=fare_type,
@@ -603,7 +626,7 @@ class FareChecker:
                 status = "lower_fare"
             else:
                 logger.info(
-                    "Companion fare check for flight %s: %s (no lower fare found)",
+                    "Fare check for flight %s: %s (no lower fare found)",
                     flight.confirmation_number,
                     price_info,
                 )
@@ -622,7 +645,7 @@ class FareChecker:
             )
 
         logger.info(
-            "Companion fare check for flight %s: current %s fare is %s PTS. "
+            "Fare check for flight %s: current %s fare is %s PTS. "
             "Set 'companionFarePoints' in config to detect lower fares.",
             flight.confirmation_number,
             fare_type,
@@ -684,7 +707,7 @@ class FareChecker:
 
         if not visible:
             logger.info(
-                "Companion alternate fare check for flight %s on %s: no new cheaper alternatives "
+                "Alternate fare check for flight %s on %s: no new cheaper alternatives "
                 "(none found or all ignored)",
                 conf,
                 flight_date,
@@ -773,11 +796,11 @@ class FareChecker:
     def _log_companion_unavailable(
         self, flight: Flight, companion_fare_points: int | None, reason: str = ""
     ) -> None:
-        """Log a clear INFO message when companion fare checking is unavailable."""
+        """Log a clear INFO message when a public search fare check is unavailable."""
         suffix = f" ({reason})" if reason else ""
         if companion_fare_points is not None:
             logger.info(
-                "Companion fare check for flight %s is unavailable%s. "
+                "Fare check for flight %s is unavailable%s. "
                 "Paid fare: %s points. Cannot determine if a lower fare exists.",
                 flight.confirmation_number,
                 suffix,
@@ -785,10 +808,11 @@ class FareChecker:
             )
         else:
             logger.info(
-                "Companion fare check for flight %s is unavailable%s. "
-                "Set 'companionFarePoints' in the reservation config to enable fare tracking.",
+                "Fare check for flight %s is unavailable%s. "
+                "Set '%s' in the reservation config to enable fare tracking.",
                 flight.confirmation_number,
                 suffix,
+                self._paid_fare_setting_name(flight),
             )
 
     def _get_flight_price(self, flight: Flight) -> JSON:

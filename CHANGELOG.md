@@ -47,7 +47,18 @@ logged with a suggested correction instead of being silently ignored
     - The mobile API is still tried first (with fewer attempts than before, since a rejection is no
     longer the end of the road) because its response carries a change link and airport names that
     the website's does not. Reservations retrieved from the website show airport codes rather than
-    names, and their fare checks are skipped rather than failed
+    names
+- Fare checks no longer stop working when a reservation came from the website lookup
+    - Southwest's change API is what reports a fare difference, and the website's reservation
+    payload carries no link to it, so those fare checks were being skipped entirely
+    - Any flight without a change link now falls back to the public flight search, which was
+    already used for companion-pass reservations. Note this prices the route as a new booking
+    against what you paid (`originalFarePoints`, or `companionFarePoints` for a companion
+    reservation) rather than reporting what Southwest would actually credit on a change
+    - Flights that can already be changed for free (reaccommodated) are still skipped, since
+    there is nothing to compare
+    - Fare-check log messages no longer describe every check as a companion one, and now name
+    whichever paid-fare setting applies to the reservation
     - Cookies and TLS fingerprint impersonation were both measured and neither helped, so neither
     was adopted
 - Stop cancelling scheduled check-ins when a reservation lookup fails

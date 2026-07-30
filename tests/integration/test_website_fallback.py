@@ -15,6 +15,7 @@ from pytest_mock import MockerFixture
 
 from lib.checkin_scheduler import RESERVATION_MAX_ATTEMPTS
 from lib.config import GlobalConfig
+from lib.fare_checker import FareChecker
 from lib.reservation_monitor import ReservationMonitor
 from lib.reservation_schema import translate_manage_reservation
 from lib.utils import TRANSIENT_ORIGIN_REJECTION, RequestError
@@ -190,3 +191,34 @@ def test_the_mobile_api_is_not_retried_into_the_ground_first(
 
     assert mock_request.call_args.kwargs["max_attempts"] == RESERVATION_MAX_ATTEMPTS
     assert RESERVATION_MAX_ATTEMPTS < 20
+
+
+def test_public_search_uses_the_right_paid_fare(mocker: MockerFixture) -> None:
+    """
+    Which figure was paid depends on how the reservation was booked, so the public search has to
+    compare against the matching one or every result is wrong by the difference between them.
+    """
+    config = GlobalConfig()
+    config.create_reservation_config(
+        [
+            {
+                "confirmationNumber": "CW6KR4",
+                "firstName": "Brian",
+                "lastName": "Fenster",
+                "originalFarePoints": 13500,
+                "companionFarePoints": 4200,
+            }
+        ]
+    )
+    monitor = ReservationMonitor(config.reservations[0], lock=None, send_notifications=False)
+    checker = FareChecker(monitor)
+    delegate = mocker.patch.object(checker, "_check_companion_fare_via_webdriver")
+    flight = mocker.Mock()
+
+    mocker.patch.object(FareChecker, "_is_companion_flight", return_value=False)
+    checker._check_fare_via_public_search(flight)
+    assert delegate.call_args[0][1] == 13500
+
+    mocker.patch.object(FareChecker, "_is_companion_flight", return_value=True)
+    checker._check_fare_via_public_search(flight)
+    assert delegate.call_args[0][1] == 4200

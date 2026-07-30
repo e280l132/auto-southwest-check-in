@@ -234,10 +234,27 @@ def test_flight_error_with_companion(
     mock_webdriver_check.assert_called_once_with(flight, None)
 
 
-def test_flight_error_when_no_change_link_exists(
-    monitor: ReservationMonitor, flight: Flight
+def test_no_change_link_falls_back_to_public_search(
+    mocker: MockerFixture, monitor: ReservationMonitor, flight: Flight
 ) -> None:
+    """
+    A reservation retrieved from the Southwest website carries no change link. Rather than give up
+    on the fare check, price the route through the public search instead.
+    """
     flight.reservation_info["_links"]["change"] = None
+
+    fare_checker = FareChecker(monitor)
+    mock_public_search = mocker.patch.object(fare_checker, "_check_fare_via_public_search")
+
+    fare_checker.check_flight_price(flight)
+
+    mock_public_search.assert_called_once_with(flight)
+
+
+def test_a_free_change_is_still_skipped(monitor: ReservationMonitor, flight: Flight) -> None:
+    """A reaccommodated flight can already be changed for free, so there is nothing to compare."""
+    flight.reservation_info["_links"]["change"] = None
+    flight.reservation_info["_links"]["reaccom"] = {"href": "reaccom"}
 
     fare_checker = FareChecker(monitor)
     with pytest.raises(FlightChangeError):
