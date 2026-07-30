@@ -92,9 +92,14 @@ def test_account_from_command_line_with_verbose(
     mocker: MockerFixture, verbose_flag: str, logger: logging.Logger
 ) -> None:
     mock_process = mocker.patch("multiprocessing.Process").return_value
-    mocker.patch("multiprocessing.active_children", return_value=[mock_process])
+    # The monitoring process is still running on the first poll and gone on the second, which is
+    # what lets the wait loop finish
+    mocker.patch("multiprocessing.active_children", side_effect=[[mock_process], []])
+    mock_web_ui = mocker.patch("lib.main.start_web_ui_background")
 
-    args = ["test_user", "test_pass", verbose_flag]
+    # '--no-web' keeps the test from binding a real port, and means the script exits once
+    # monitoring is done rather than staying up to serve the web UI
+    args = ["test_user", "test_pass", verbose_flag, "--no-web"]
     # sys.argv is used instead of the args passed in to the log module (it also would have
     # southwest.py prepended to it in real use)
     mocker.patch("sys.argv", ["test_file", *args])
@@ -103,6 +108,7 @@ def test_account_from_command_line_with_verbose(
 
     mock_process.start.assert_called_once()
     mock_process.join.assert_called_once()
+    mock_web_ui.assert_not_called()
 
     assert logger.handlers[1].level == logging.DEBUG
 
@@ -111,9 +117,10 @@ def test_reservation_from_command_line_without_verbose(
     mocker: MockerFixture, logger: logging.Logger
 ) -> None:
     mock_process = mocker.patch("multiprocessing.Process").return_value
-    mocker.patch("multiprocessing.active_children", return_value=[mock_process])
+    mocker.patch("multiprocessing.active_children", side_effect=[[mock_process], []])
+    mocker.patch("lib.main.start_web_ui_background")
 
-    args = ["TEST", "Charli", "Silvester"]
+    args = ["TEST", "Charli", "Silvester", "--no-web"]
     # sys.argv is used instead of the args passed in to the log module (it also would have
     # southwest.py prepended to it in real use)
     mocker.patch("sys.argv", ["test_file", *args])
@@ -136,14 +143,43 @@ def test_accounts_and_reservations_from_config(mocker: MockerFixture) -> None:
     mocker.patch("pathlib.Path.read_text", return_value=json.dumps(config))
 
     mock_process = mocker.patch("multiprocessing.Process").return_value
-    mocker.patch("multiprocessing.active_children", return_value=[mock_process, mock_process])
+    mocker.patch(
+        "multiprocessing.active_children", side_effect=[[mock_process, mock_process], []]
+    )
+    mocker.patch("lib.main.start_web_ui_background")
 
-    main.main([], "test_version")
+    main.main(["--no-web"], "test_version")
 
     assert mock_process.start.call_count == 2
     assert mock_process.join.call_count == 2
 
 
-def test_error_on_invalid_arguments() -> None:
+def test_error_on_invalid_arguments(mocker: MockerFixture) -> None:
+    # The web UI starts before the arguments are validated, so it has to be stubbed out or the
+    # test binds a real port
+    mocker.patch("lib.main.start_web_ui_background")
+
     with pytest.raises(SystemExit):
         main.main(["most", "definitely", "invalid", "arguments"], "test_version")
+
+
+def test_waiting_returns_when_idle_and_web_ui_is_disabled(mocker: MockerFixture) -> None:
+    """Without a web UI to serve, an idle script should exit instead of polling forever."""
+    mocker.patch("multiprocessing.active_children", return_value=[])
+    mock_sleep = mocker.patch("lib.main.time.sleep")
+
+    main._wait_for_children_or_reload(keep_alive_when_idle=False)
+
+    mock_sleep.assert_not_called()
+
+
+def test_waiting_stays_alive_when_idle_to_serve_the_web_ui(mocker: MockerFixture) -> None:
+    """With the web UI up there is still something to serve, so the script keeps waiting."""
+    mocker.patch("multiprocessing.active_children", return_value=[])
+    # Break out of the otherwise-infinite wait on the second poll
+    mocker.patch("lib.main.app_control.reload_requested", side_effect=[False, False, True])
+    mock_sleep = mocker.patch("lib.main.time.sleep")
+
+    main._wait_for_children_or_reload(keep_alive_when_idle=True)
+
+    mock_sleep.assert_called()

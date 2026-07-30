@@ -8,7 +8,12 @@ import apprise
 import requests
 
 from .log import get_logger
-from .utils import LoginError, NotificationLevel, RequestError
+from .utils import (
+    TRANSIENT_ORIGIN_REJECTION,
+    LoginError,
+    NotificationLevel,
+    RequestError,
+)
 
 if TYPE_CHECKING:
     from .flight import Flight
@@ -129,10 +134,21 @@ class NotificationHandler:
         self.send_notification(flight_reaccommodation_message, NotificationLevel.INFO, flights)
 
     def failed_reservation_retrieval(self, error: RequestError, confirmation_number: str) -> None:
+        if error.southwest_code == TRANSIENT_ORIGIN_REJECTION:
+            # Southwest rejected every attempt, but this code means their servers are refusing
+            # otherwise-valid lookups, so telling the user to check their details sends them
+            # chasing a problem that isn't theirs.
+            advice = (
+                "Southwest rejected every attempt. This is usually a temporary problem on their "
+                "end, not a problem with your reservation details. Scheduled check-ins were kept "
+                "and the reservation will be retried next interval.\n"
+            )
+        else:
+            advice = "Make sure the reservation information is correct and try again.\n"
+
         error_message = (
             f"Error: Failed to retrieve reservation for {self._get_account_name()} "
-            f"with confirmation number {confirmation_number}. Reason: {error}.\n"
-            "Make sure the reservation information is correct and try again.\n"
+            f"with confirmation number {confirmation_number}. Reason: {error}.\n" + advice
         )
         logger.debug("Sending failed reservation retrieval notification...")
         self.send_notification(error_message, NotificationLevel.ERROR)

@@ -20,11 +20,40 @@ BASE_URL = "https://mobile.southwest.com/api/"
 NTP_SERVER = "time.nist.gov"
 NTP_BACKUP_SERVER = "time.cloudflare.com"
 
+# Southwest's origin intermittently rejects otherwise-valid requests with this code. It is not bot
+# detection: the request reaches the origin (the response carries a Server-Timing origin duration),
+# and a real browser making the same call is rejected at the same rate. Measured failure rates of
+# 50-70% are common, and Southwest has bad windows where it rejects nearly everything for minutes
+# at a time. Retrying is the only mitigation, which is why these retries are spread over minutes
+# rather than seconds.
+TRANSIENT_ORIGIN_REJECTION = 403050700
+
+# Retry backoff. Doubles each attempt up to the cap, so the default 20 attempts span roughly ten
+# minutes instead of forty seconds and can ride out a bad window at Southwest.
+BACKOFF_BASE_SECS = 2
+BACKOFF_CAP_SECS = 45
+
+# The fare change endpoints are rejected far more often than reservation lookups, so they need more
+# attempts to get through. A lower cap keeps those extra attempts from stretching a fare check out
+# over ten minutes: the rejections are random per request rather than rate limiting, so retrying
+# sooner is both effective and harmless.
+FARE_CHECK_MAX_ATTEMPTS = 20
+FARE_CHECK_BACKOFF_CAP_SECS = 10
+
 logger = get_logger(__name__)
 
 
 def random_sleep_duration(min_duration: float, max_duration: float) -> float:
     return random.uniform(min_duration, max_duration)
+
+
+def _backoff_duration(attempts: int, cap_secs: float = BACKOFF_CAP_SECS) -> float:
+    """
+    Exponential backoff with jitter, capped. The jitter keeps concurrent monitors from retrying
+    in lockstep, and the cap keeps late attempts from drifting too far apart.
+    """
+    ceiling = min(cap_secs, BACKOFF_BASE_SECS * 2 ** (attempts - 1))
+    return random_sleep_duration(ceiling / 2, ceiling)
 
 
 def make_request(
@@ -34,6 +63,7 @@ def make_request(
     info: JSON,
     max_attempts: int = 20,
     random_sleep: bool = True,
+    backoff_cap_secs: float = BACKOFF_CAP_SECS,
 ) -> JSON:
     """
     Makes a request to the Southwest servers. For increased reliability, the request is performed
@@ -69,11 +99,27 @@ def make_request(
             error = err
             break
 
-        sleep_time = random_sleep_duration(1, 3) if random_sleep else 0.5
+        transient = (
+            " (transient Southwest origin rejection)"
+            if error.southwest_code == TRANSIENT_ORIGIN_REJECTION
+            else ""
+        )
+
+        # Sleeping after the final attempt only delays the failure, which matters now that the
+        # backoff reaches tens of seconds
+        if attempts >= max_attempts:
+            logger.debug(
+                "Request error on attempt %d/%d: %s%s", attempts, max_attempts, error_msg, transient
+            )
+            break
+
+        sleep_time = _backoff_duration(attempts, backoff_cap_secs) if random_sleep else 0.5
         logger.debug(
-            "Request error on attempt %d: %s. Sleeping for %.2f seconds until next attempt",
+            "Request error on attempt %d/%d: %s%s. Sleeping for %.2f seconds until next attempt",
             attempts,
+            max_attempts,
             error_msg,
+            transient,
             sleep_time,
         )
         time.sleep(sleep_time)
@@ -106,19 +152,23 @@ def _handle_southwest_error_code(error: RequestError) -> None:
         raise AirportCheckInError("Airport check-in is required")
 
     if error.southwest_code == SouthwestErrorCode.FLIGHT_IN_PAST:
-        raise RequestError("Flight has already departed")
+        raise RequestError("Flight has already departed", southwest_code=error.southwest_code)
 
     if error.southwest_code == SouthwestErrorCode.INVALID_CONFIRMATION_NUMBER_LENGTH:
-        raise RequestError("Invalid confirmation number length")
+        raise RequestError(
+            "Invalid confirmation number length", southwest_code=error.southwest_code
+        )
 
     if error.southwest_code == SouthwestErrorCode.PASSENGER_NOT_FOUND:
-        raise RequestError("Passenger not found on reservation")
+        raise RequestError(
+            "Passenger not found on reservation", southwest_code=error.southwest_code
+        )
 
     if error.southwest_code == SouthwestErrorCode.RESERVATION_NOT_FOUND:
-        raise RequestError("Reservation not found")
+        raise RequestError("Reservation not found", southwest_code=error.southwest_code)
 
     if error.southwest_code == SouthwestErrorCode.RESERVATION_CANCELLED:
-        raise RequestError("Reservation has been cancelled")
+        raise RequestError("Reservation has been cancelled", southwest_code=error.southwest_code)
 
 
 def get_current_time() -> datetime:
@@ -149,7 +199,9 @@ def get_current_time() -> datetime:
 class RequestError(Exception):
     """A custom exception when a request fails"""
 
-    def __init__(self, message: str, response_body: str = "") -> None:
+    def __init__(
+        self, message: str, response_body: str = "", southwest_code: int | None = None
+    ) -> None:
         super().__init__(message)
 
         try:
@@ -157,7 +209,11 @@ class RequestError(Exception):
         except json.decoder.JSONDecodeError:
             response_json = {}
 
-        self.southwest_code = response_json.get("code")
+        # Callers that re-raise a friendlier error pass the code explicitly so it survives; without
+        # it, code-based handling downstream silently stops matching.
+        self.southwest_code = (
+            southwest_code if southwest_code is not None else response_json.get("code")
+        )
 
 
 class AirportCheckInError(Exception):

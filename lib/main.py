@@ -136,13 +136,16 @@ def _extract_web_flags(arguments: list[str]) -> tuple[list[str], bool, bool, int
     return remaining, web_flag_present, no_web_flag_present, web_port
 
 
-def _wait_for_children_or_reload() -> None:
+def _wait_for_children_or_reload(keep_alive_when_idle: bool = True) -> None:
     """
     Block the main thread until either every monitoring process has exited on its own or a
     config reload is requested (e.g. from the web UI's "Reload config" button). Polling (rather
     than a single blocking join) lets a reload request unblock promptly even while monitoring
-    processes are still running, and keeps the process alive even when there are no monitoring
-    processes at all (e.g. '--web' mode, or an empty config) so the web UI stays reachable.
+    processes are still running.
+
+    With the web UI running there is still something to serve once monitoring finishes, so the
+    process stays alive when idle (e.g. '--web' mode, or an empty config). Under '--no-web' there
+    is nothing left to do, so waiting returns and lets the script exit.
     """
     while not app_control.reload_requested():
         children = multiprocessing.active_children()
@@ -151,8 +154,10 @@ def _wait_for_children_or_reload() -> None:
                 child.join(timeout=1)
                 if app_control.reload_requested():
                     return
-        else:
+        elif keep_alive_when_idle:
             time.sleep(1)
+        else:
+            return
 
 
 def _apply_cli_overrides(config: GlobalConfig, arguments: list[str]) -> None:
@@ -255,7 +260,7 @@ def set_up_check_in(arguments: list[str]) -> None:
     while True:
         # Keep the main process alive until all processes are done (or a reload is requested) so
         # it can handle keyboard interrupts and the web UI's "Reload config" button
-        _wait_for_children_or_reload()
+        _wait_for_children_or_reload(keep_alive_when_idle=web_ui_enabled)
         if not app_control.reload_requested():
             return
 

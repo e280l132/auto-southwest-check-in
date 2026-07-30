@@ -40,11 +40,18 @@ class CheckInScheduler:
         flights are scheduled and any flights now longer found are removed.
         """
         flights = []
+        # Southwest intermittently rejects reservation lookups even when the reservation is fine.
+        # A failed lookup returns no flights, which is indistinguishable from a reservation whose
+        # flights are gone, so track it explicitly: scheduled check-ins must not be torn down just
+        # because Southwest was unreachable this cycle.
+        all_retrievals_authoritative = True
         for confirmation_number in confirmation_numbers:
-            flights.extend(self._get_flights(confirmation_number))
+            reservation_flights, is_authoritative = self._get_flights(confirmation_number)
+            flights.extend(reservation_flights)
+            all_retrievals_authoritative &= is_authoritative
 
         logger.debug("%d total flights were found", len(flights))
-        self._update_scheduled_flights(flights)
+        self._update_scheduled_flights(flights, remove_old=all_retrievals_authoritative)
 
     def refresh_headers(self) -> None:
         logger.debug("Refreshing headers for current session")
@@ -56,11 +63,17 @@ class CheckInScheduler:
         Retrieve a reservation's upcoming flights without scheduling any check-ins. Used by the
         web UI to look up flight/fare details on demand without triggering CheckInHandler.
         """
-        return self._get_flights(confirmation_number)
+        return self._get_flights(confirmation_number)[0]
 
-    def _get_flights(self, confirmation_number: str) -> list[Flight]:
-        """Get all flights booked on a single reservation"""
-        reservation_info = self._get_reservation_info(confirmation_number)
+    def _get_flights(self, confirmation_number: str) -> tuple[list[Flight], bool]:
+        """
+        Get all flights booked on a single reservation.
+
+        Also returns whether the result is authoritative, i.e. whether Southwest actually told us
+        the current state of the reservation. An empty list with `False` means the lookup failed,
+        not that the reservation is empty.
+        """
+        reservation_info, is_authoritative = self._get_reservation_info(confirmation_number)
         bounds = reservation_info.get("bounds", [])
         logger.debug("%d flights found under current reservation", len(bounds))
 
@@ -76,9 +89,9 @@ class CheckInScheduler:
                 self._set_same_day_flight(flight, flights)
                 flights.append(flight)
 
-        return flights
+        return flights, is_authoritative
 
-    def _get_reservation_info(self, confirmation_number: str) -> dict[str, Any]:
+    def _get_reservation_info(self, confirmation_number: str) -> tuple[dict[str, Any], bool]:
         info = {
             "firstName": self.reservation_monitor.first_name,
             "lastName": self.reservation_monitor.last_name,
@@ -91,20 +104,23 @@ class CheckInScheduler:
             response = make_request("POST", site, self.headers, info)
         except RequestError as err:
             self.last_fetch_error = str(err)
+            flights_departed = err.southwest_code == SouthwestErrorCode.FLIGHT_IN_PAST
 
             # Don't send a notification if flights have already been scheduled and all flights
             # from this reservation are old. This is how old flights are removed.
-            if len(self.flights) == 0 or err.southwest_code != SouthwestErrorCode.FLIGHT_IN_PAST:
+            if len(self.flights) == 0 or not flights_departed:
                 logger.debug("Failed to retrieve reservation info. Error: %s. Exiting", err)
                 self.notification_handler.failed_reservation_retrieval(err, confirmation_number)
             else:
                 logger.debug("Flights on the reservation have already departed")
 
-            return {}
+            # Departed flights are a real answer about the reservation, so removal should still
+            # run. Any other failure tells us nothing, so the caller must leave check-ins alone.
+            return {}, flights_departed
 
         self.last_fetch_error = None
         logger.debug("Successfully retrieved reservation information")
-        return response["viewReservationViewPage"]
+        return response["viewReservationViewPage"], True
 
     def _set_same_day_flight(self, flight: Flight, previous_flights: list[Flight]) -> None:
         for prev_flight in previous_flights:
@@ -113,12 +129,16 @@ class CheckInScheduler:
                 flight.is_same_day = True
                 break
 
-    def _update_scheduled_flights(self, flights: list[Flight]) -> None:
+    def _update_scheduled_flights(self, flights: list[Flight], remove_old: bool = True) -> None:
         """
         Responsible for three tasks to update scheduled flights:
           1. Schedule check-ins for any new flights
           2. Remove scheduled flights that no longer exist
           3. Update the cached reservation info for any scheduled flights that do still exist
+
+        Task 2 is skipped when `remove_old` is False, which means at least one reservation lookup
+        failed this cycle. Removing flights based on an incomplete list would cancel check-ins for
+        flights that are still booked.
         """
         logger.debug(
             "Updating scheduled flights (%d scheduled, %d found)", len(self.flights), len(flights)
@@ -137,7 +157,14 @@ class CheckInScheduler:
         logger.debug("%d new flights found", len(new_flights))
         self._schedule_flights(new_flights)
 
-        self._remove_old_flights(flights)
+        if remove_old:
+            self._remove_old_flights(flights)
+        else:
+            logger.debug(
+                "Skipping removal of old flights because a reservation lookup failed. "
+                "%d flights remain scheduled",
+                len(self.flights),
+            )
 
     def _schedule_flights(self, flights: list[Flight]) -> None:
         logger.debug("Scheduling %d flights for check-in", len(flights))

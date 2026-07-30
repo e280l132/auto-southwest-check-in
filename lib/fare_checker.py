@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 from .fare_check_result import FareCheckResult
 from .log import get_logger
 from .utils import (
+    FARE_CHECK_BACKOFF_CAP_SECS,
+    FARE_CHECK_MAX_ATTEMPTS,
     CheckFaresOption,
     DriverTimeoutError,
     FlightChangeError,
@@ -830,7 +832,14 @@ class FareChecker:
         logger.debug("Retrieving matching flights")
         time.sleep(2)
 
-        response = make_request("POST", site, self.headers, query, max_attempts=7)
+        response = make_request(
+            "POST",
+            site,
+            self.headers,
+            query,
+            max_attempts=FARE_CHECK_MAX_ATTEMPTS,
+            backoff_cap_secs=FARE_CHECK_BACKOFF_CAP_SECS,
+        )
         return response["changeShoppingPage"]["flights"][bound_page]["cards"], fare_type
 
     def _get_change_flight_page(self, reservation_info: JSON) -> tuple[JSON, list[JSON]]:
@@ -858,7 +867,14 @@ class FareChecker:
         logger.debug("changeFlightPage query params: %s", change_link["query"])
         time.sleep(2)
 
-        response = make_request("GET", site, self.headers, change_link["query"], max_attempts=7)
+        response = make_request(
+            "GET",
+            site,
+            self.headers,
+            change_link["query"],
+            max_attempts=FARE_CHECK_MAX_ATTEMPTS,
+            backoff_cap_secs=FARE_CHECK_BACKOFF_CAP_SECS,
+        )
         return response["changeFlightPage"], fare_type_bounds
 
     def _get_search_query(self, flight_page: JSON, flight: Flight) -> JSON:

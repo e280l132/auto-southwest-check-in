@@ -37,6 +37,29 @@ logged with a suggested correction instead of being silently ignored
     the account for interactions with Southwest
 - Clean up leftover temporary browser files ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
 - Clean up zombie chromium processes in Docker ([#216](https://github.com/jdholtz/auto-southwest-check-in/discussions/216))
+- Stop cancelling scheduled check-ins when a reservation lookup fails
+    - Southwest intermittently rejects valid reservation lookups with code `403050700`. The request
+    reaches their origin and a real browser is rejected at the same rate, so this is a problem on
+    their end rather than bot detection. A failed lookup returned no flights, which was
+    indistinguishable from a reservation whose flights are gone, so one bad response would cancel
+    every scheduled check-in and stop monitoring the reservation
+    - Failed lookups now leave scheduled check-ins alone and are retried on the next interval.
+    Flights that have actually departed are still removed as before
+- Spread request retries over minutes instead of seconds, using exponential backoff with jitter, so
+a bad window at Southwest is ridden out instead of exhausting all attempts in about 40 seconds.
+Check-in requests are unaffected and still retry as quickly as possible
+- Preserve the Southwest error code when a request error is re-raised with a friendlier message.
+The code was being dropped, which broke the check for flights that have already departed and caused
+a spurious error notification for them
+- Explain in the failed-retrieval notification when Southwest is rejecting the lookup on their end,
+instead of always advising that the reservation information may be wrong
+- Exit once monitoring finishes when running with `--no-web`, instead of polling forever. The wait
+loop stays alive when idle only if the web UI is running and has something left to serve
+- Stop sleeping after the final request attempt, which only delayed the failure (by up to the
+backoff cap) without ever retrying again
+- Give fare checks more attempts (7 was frequently exhausted, since the flight change endpoints are
+rejected far more often than reservation lookups) with a lower backoff cap, so the extra attempts
+don't stretch a single fare check out over several minutes
 
 ### Upgrading
 - Upgrade the dependencies to the latest versions by running `pip install -r requirements.txt`
