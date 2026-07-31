@@ -8,9 +8,11 @@ from .log import get_logger
 from .utils import (
     FARE_CHECK_BACKOFF_CAP_SECS,
     FARE_CHECK_MAX_ATTEMPTS,
+    TRANSIENT_ORIGIN_REJECTION,
     CheckFaresOption,
     DriverTimeoutError,
     FlightChangeError,
+    RequestError,
     make_request,
     time,
 )
@@ -520,10 +522,25 @@ class FareChecker:
                     err,
                 )
                 self._log_companion_unavailable(flight, companion_fare_points, reason=str(err))
+
+                # Southwest's own origin rejects the request at this rate for a real browser too
+                # (measured), so a raw "Forbidden (403)" reads as this tool being broken when it's
+                # actually Southwest, and retrying sooner wouldn't have changed the outcome -- this
+                # already retried 20 times with backoff before giving up.
+                is_transient = isinstance(
+                    err, RequestError
+                ) and err.southwest_code == TRANSIENT_ORIGIN_REJECTION
+                message = (
+                    "Southwest rejected every attempt. This is usually temporary and not a "
+                    "problem with the reservation — try checking again shortly."
+                    if is_transient
+                    else str(err)
+                )
                 return self._make_result(
                     flight,
                     status="error",
-                    message=str(err),
+                    message=message,
+                    transient=is_transient,
                     paid_points=companion_fare_points,
                 )
 

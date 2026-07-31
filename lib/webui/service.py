@@ -246,6 +246,7 @@ def _result_view(
         "is_companion": result.is_companion,
         "status": result.status,
         "message": result.message,
+        "transient": result.transient,
         "fare_type": result.fare_type,
         "paid_points": paid_points_for_flight,
         "paid_taxes_fees": paid_taxes_fees,

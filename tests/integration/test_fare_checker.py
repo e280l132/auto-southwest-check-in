@@ -13,7 +13,7 @@ from lib.config import GlobalConfig
 from lib.fare_checker import BOOKING_URL, FareChecker
 from lib.flight import Flight
 from lib.reservation_monitor import ReservationMonitor
-from lib.utils import BASE_URL, CheckFaresOption, FlightChangeError
+from lib.utils import BASE_URL, CheckFaresOption, FlightChangeError, RequestError
 
 CHANGE_FLIGHT_URL = BASE_URL + BOOKING_URL + "change_page"
 MATCHING_FLIGHTS_URL = BASE_URL + BOOKING_URL + "matching_flights"
@@ -280,3 +280,44 @@ def test_unavailable_fares(
     fare_checker.check_flight_price(flight)
 
     monitor.notification_handler.lower_fare.assert_not_called()
+
+
+def test_transient_public_search_failure_is_explained_not_shown_raw(
+    mocker: MockerFixture, monitor: ReservationMonitor, flight: Flight
+) -> None:
+    """
+    A raw "Forbidden (403)" reads as this tool being broken. Southwest rejects a real browser at
+    the same rate as this script, so when every retry has already been exhausted, the UI should
+    say so plainly instead of showing the bare exception text.
+    """
+    flight.reservation_info["_links"]["change"] = None
+    fare_checker = FareChecker(monitor)
+    mocker.patch(
+        "lib.webdriver.WebDriver"
+    ).return_value.get_public_flight_prices.side_effect = RequestError(
+        "Forbidden (403)", '{"code": 403050700}'
+    )
+
+    result = fare_checker._check_fare_via_public_search(flight)
+
+    assert result.status == "error"
+    assert result.transient is True
+    assert "Forbidden (403)" not in result.message
+    assert "temporary" in result.message.lower()
+
+
+def test_a_real_error_is_still_shown_as_is(
+    mocker: MockerFixture, monitor: ReservationMonitor, flight: Flight
+) -> None:
+    """A genuine bug (not a Southwest rejection) must not be hidden behind the friendly wording."""
+    flight.reservation_info["_links"]["change"] = None
+    fare_checker = FareChecker(monitor)
+    mocker.patch(
+        "lib.webdriver.WebDriver"
+    ).return_value.get_public_flight_prices.side_effect = ValueError("boom")
+
+    result = fare_checker._check_fare_via_public_search(flight)
+
+    assert result.status == "error"
+    assert result.transient is False
+    assert "boom" in result.message

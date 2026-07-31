@@ -28,6 +28,11 @@ class FareCheckResult:
 
     message: str = ""
 
+    # True when the failure is Southwest's own origin rejecting the request (code 403050700),
+    # which happens to a real browser at the same rate as this script -- not something a lower
+    # fare check or a config change can fix. Lets the UI say so instead of showing a raw error.
+    transient: bool = False
+
     # Populated for same_flight/same_day/same_day_nonstop checks (priceDifference from Southwest)
     currency_code: str | None = None
     difference_amount: int | None = None
