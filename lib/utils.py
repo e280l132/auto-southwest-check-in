@@ -95,13 +95,22 @@ def make_request_to_url(
     endpoint.
     """
     attempts = 0
+    start = time.time()
     while attempts < max_attempts:
         attempts += 1
 
         try:
+            request_start = time.time()
             response = _do_request(method, url, headers, info)
+            request_elapsed = time.time() - request_start
             if response.status_code == 200:
-                logger.debug("Successfully made request after %d attempts", attempts)
+                logger.info(
+                    "%s succeeded after %d attempt(s), %.1fs total (last request took %.1fs)",
+                    url,
+                    attempts,
+                    time.time() - start,
+                    request_elapsed,
+                )
                 return response.json()
 
             response_body = response.content.decode()
@@ -144,7 +153,13 @@ def make_request_to_url(
         )
         time.sleep(sleep_time)
 
-    logger.debug("Failed to make request after %d attempts: %s", attempts, error_msg)
+    logger.info(
+        "%s failed after %d attempts, %.1fs total: %s",
+        url,
+        attempts,
+        time.time() - start,
+        error_msg,
+    )
     logger.debug("Response body: %s", response_body)
     raise error
 

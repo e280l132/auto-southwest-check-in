@@ -10,6 +10,7 @@ per process, not for concurrent use within a process.
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -138,8 +139,17 @@ class JobManager:
             logger.exception("Could not cache flight info for %s", confirmation_number)
 
     def _run_single(self, job_id: str, reservation_config: ReservationConfig) -> None:
+        queued_at = time.monotonic()
         with self._check_lock:
+            wait_time = time.monotonic() - queued_at
+            if wait_time > 1:
+                logger.info(
+                    "Job %s waited %.1fs for the webdriver lock (another check was running)",
+                    job_id,
+                    wait_time,
+                )
             self._update_job(job_id, status="running")
+            run_start = time.monotonic()
             try:
                 payload = runner.run_check(reservation_config, self._results_store)
                 self._cache_flight_info(reservation_config.confirmation_number, payload)
@@ -149,6 +159,7 @@ class JobManager:
                     results={reservation_config.confirmation_number: payload},
                     finished_at=datetime.now(timezone.utc).isoformat(),
                 )
+                logger.info("Job %s finished in %.1fs", job_id, time.monotonic() - run_start)
             except Exception as err:
                 logger.exception(
                     "Web UI job %s failed for %s", job_id, reservation_config.confirmation_number
@@ -161,15 +172,31 @@ class JobManager:
                 )
 
     def _run_all(self, job_id: str, reservation_configs: list[ReservationConfig]) -> None:
+        queued_at = time.monotonic()
         with self._check_lock:
+            wait_time = time.monotonic() - queued_at
+            if wait_time > 1:
+                logger.info(
+                    "Job %s waited %.1fs for the webdriver lock (another check was running)",
+                    job_id,
+                    wait_time,
+                )
             self._update_job(job_id, status="running")
+            run_start = time.monotonic()
             results: JSON = {}
             error = None
             for reservation_config in reservation_configs:
+                reservation_start = time.monotonic()
                 try:
                     payload = runner.run_check(reservation_config, self._results_store)
                     self._cache_flight_info(reservation_config.confirmation_number, payload)
                     results[reservation_config.confirmation_number] = payload
+                    logger.info(
+                        "Check-all job %s: %s finished in %.1fs",
+                        job_id,
+                        reservation_config.confirmation_number,
+                        time.monotonic() - reservation_start,
+                    )
                 except Exception as err:
                     logger.exception(
                         "Web UI check-all job %s failed for %s",
@@ -199,4 +226,10 @@ class JobManager:
                 results=results,
                 error=error,
                 finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            logger.info(
+                "Check-all job %s finished all %d reservation(s) in %.1fs",
+                job_id,
+                len(reservation_configs),
+                time.monotonic() - run_start,
             )

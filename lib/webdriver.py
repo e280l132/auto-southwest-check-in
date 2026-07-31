@@ -200,6 +200,7 @@ class WebDriver:
             # already has the correct driver
             driver_version = "keep"
 
+        start = time.monotonic()
         try:
             driver = Driver(
                 binary_location=browser_path,
@@ -219,18 +220,24 @@ class WebDriver:
             # monitor process uncaught.
             raise DriverTimeoutError(f"Failed to start the browser: {err}") from err
 
-        logger.debug("Using browser version: %s", driver.caps["browserVersion"])
+        logger.info(
+            "Browser started in %.1fs (version %s)",
+            time.monotonic() - start,
+            driver.caps["browserVersion"],
+        )
 
         driver.add_cdp_listener("Network.requestWillBeSent", self._headers_listener)
 
         # Load the login page to get valid headers
         logger.debug("Loading mobile Southwest login page (this may take a moment)")
+        page_load_start = time.monotonic()
         try:
             driver.get(MOBILE_LOGIN_URL)
         except Exception as err:
             self._quit_driver(driver)
             raise DriverTimeoutError(f"Failed to load the mobile login page: {err}") from err
 
+        logger.info("Mobile login page loaded in %.1fs", time.monotonic() - page_load_start)
         self._take_debug_screenshot(driver, "after_page_load.png")
 
         return driver
@@ -274,6 +281,7 @@ class WebDriver:
     def _wait_for_attribute(self, driver: Driver, attribute: str) -> None:
         logger.debug("Waiting for %s to be set (timeout: %d seconds)", attribute, WAIT_TIMEOUT_SECS)
         poll_interval = 0.5
+        start = time.monotonic()
 
         attempts = 0
         max_attempts = WAIT_TIMEOUT_SECS / poll_interval
@@ -281,13 +289,16 @@ class WebDriver:
             time.sleep(poll_interval)
             attempts += 1
 
+        elapsed = time.monotonic() - start
         if attempts >= max_attempts:
             self._quit_driver(driver)
-            timeout_err = DriverTimeoutError(f"Timeout waiting for the '{attribute}' attribute")
-            logger.debug(timeout_err)
+            timeout_err = DriverTimeoutError(
+                f"Timeout waiting for the '{attribute}' attribute after {elapsed:.1f}s"
+            )
+            logger.info(timeout_err)
             raise timeout_err
 
-        logger.debug("%s set successfully", attribute)
+        logger.info("%s set after %.1fs", attribute, elapsed)
 
     def _wait_for_login(self, driver: Driver, account_monitor: AccountMonitor) -> None:
         """
@@ -353,10 +364,13 @@ class WebDriver:
         this flow answers reliably, so this is the fallback when that API gives up. Returns the
         'data' object of the site's manage-reservation response.
         """
+        call_start = time.monotonic()
         driver = self._get_driver()
 
         logger.debug("Looking up reservation through the Southwest website")
+        page_load_start = time.monotonic()
         driver.get(LOOKUP_RESERVATION_URL)
+        logger.info("Lookup page loaded in %.1fs", time.monotonic() - page_load_start)
 
         try:
             seleniumbase_actions.wait_for_element_visible(
@@ -390,7 +404,17 @@ class WebDriver:
         # Reading the response body back out of the browser proves unreliable across the form's
         # navigation, so repeat the request the site just made. Unlike the mobile API, this
         # endpoint accepts the replayed request.
-        return self._replay_reservation_request()
+        replay_start = time.monotonic()
+        try:
+            return self._replay_reservation_request()
+        finally:
+            logger.info(
+                "Website reservation lookup total: %.1fs browser+capture, %.1fs replay, "
+                "%.1fs overall",
+                replay_start - call_start,
+                time.monotonic() - replay_start,
+                time.monotonic() - call_start,
+            )
 
     def _capture_reservation_request(self, request: JSON) -> None:
         if self.reservation_request is None and MANAGE_RESERVATION_RESPONSE in request["url"]:
@@ -432,13 +456,16 @@ class WebDriver:
         because of a companion pass, or because the reservation came from the website lookup, which
         carries no change link. The public search has no knowledge of companion restrictions.
         """
+        call_start = time.monotonic()
         driver = self._get_driver()
 
         search_url = SEARCH_PAGE_URL.format(origin=origin, destination=destination, date=date)
         logger.debug(
             "Loading public flight search page (route: %s→%s on %s)", origin, destination, date
         )
+        page_load_start = time.monotonic()
         driver.get(search_url)
+        logger.info("Search page loaded in %.1fs", time.monotonic() - page_load_start)
         self._take_debug_screenshot(driver, "search_page.png")
 
         # _wait_for_attribute quits the driver itself and raises if the request never shows up
@@ -448,7 +475,16 @@ class WebDriver:
         # Reading the response body back out of the browser via CDP races the page's lifecycle and
         # intermittently throws "No resource with given identifier found". Repeating the request
         # the page itself just made avoids that race entirely.
-        return self._replay_search_request()
+        replay_start = time.monotonic()
+        try:
+            return self._replay_search_request()
+        finally:
+            logger.info(
+                "Public search total: %.1fs browser+capture, %.1fs replay, %.1fs overall",
+                replay_start - call_start,
+                time.monotonic() - replay_start,
+                time.monotonic() - call_start,
+            )
 
     def _capture_search_request(self, request: JSON) -> None:
         """
