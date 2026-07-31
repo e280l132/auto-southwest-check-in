@@ -321,3 +321,37 @@ def test_a_real_error_is_still_shown_as_is(
     assert result.status == "error"
     assert result.transient is False
     assert "boom" in result.message
+
+
+def test_a_rejected_token_is_retried_with_a_new_browser_session(
+    mocker: MockerFixture, monitor: ReservationMonitor, flight: Flight
+) -> None:
+    """
+    The rejection follows the session the request was captured from, so replaying that same
+    captured request cannot recover -- only a new browser gets a new token. Retrying inside one
+    session is what made a failed check burn 147s on twenty guaranteed-identical rejections.
+    """
+    flight.reservation_info["_links"]["change"] = None
+    fare_checker = FareChecker(monitor)
+    mock_webdriver = mocker.patch("lib.webdriver.WebDriver")
+    mock_webdriver.return_value.get_public_flight_prices.side_effect = RequestError(
+        "Forbidden (403)", '{"code": 403050700}'
+    )
+
+    fare_checker._check_fare_via_public_search(flight)
+
+    assert mock_webdriver.call_count == 3, "each retry must be a fresh browser session"
+
+
+def test_a_real_error_does_not_burn_extra_browser_sessions(
+    mocker: MockerFixture, monitor: ReservationMonitor, flight: Flight
+) -> None:
+    """A wrong name or cancelled reservation fails identically in a new session, so don't retry."""
+    flight.reservation_info["_links"]["change"] = None
+    fare_checker = FareChecker(monitor)
+    mock_webdriver = mocker.patch("lib.webdriver.WebDriver")
+    mock_webdriver.return_value.get_public_flight_prices.side_effect = ValueError("boom")
+
+    fare_checker._check_fare_via_public_search(flight)
+
+    assert mock_webdriver.call_count == 1

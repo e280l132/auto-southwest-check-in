@@ -20,12 +20,15 @@ BASE_URL = "https://mobile.southwest.com/api/"
 NTP_SERVER = "time.nist.gov"
 NTP_BACKUP_SERVER = "time.cloudflare.com"
 
-# Southwest's origin intermittently rejects otherwise-valid requests with this code. It is not bot
-# detection: the request reaches the origin (the response carries a Server-Timing origin duration),
-# and a real browser making the same call is rejected at the same rate. Measured failure rates of
-# 50-70% are common, and Southwest has bad windows where it rejects nearly everything for minutes
-# at a time. Retrying is the only mitigation, which is why these retries are spread over minutes
-# rather than seconds.
+# Southwest's origin rejects otherwise-valid requests with this code. The request does reach the
+# origin (the response carries a Server-Timing origin duration), and a real browser making the same
+# call is rejected too, so it is not simply a matter of looking automated.
+#
+# Retrying does not behave like a random per-request failure. Measured: every successful search got
+# through within five attempts, while a rejected one failed all twenty in a row over 147 seconds,
+# and three consecutive fresh browser sessions were rejected uniformly. So the outcome is decided
+# by something that persists across both the request and the browser session -- piling on more
+# attempts within one session buys nothing, which is why the budget here is small.
 TRANSIENT_ORIGIN_REJECTION = 403050700
 
 # Retry backoff. Doubles each attempt up to the cap, so the default 20 attempts span roughly ten
@@ -33,11 +36,11 @@ TRANSIENT_ORIGIN_REJECTION = 403050700
 BACKOFF_BASE_SECS = 2
 BACKOFF_CAP_SECS = 45
 
-# The fare change endpoints are rejected far more often than reservation lookups, so they need more
-# attempts to get through. A lower cap keeps those extra attempts from stretching a fare check out
-# over ten minutes: the rejections are random per request rather than rate limiting, so retrying
-# sooner is both effective and harmless.
-FARE_CHECK_MAX_ATTEMPTS = 20
+# Fare checks replay a request captured from a browser session. If it is accepted, it gets through
+# quickly; if it is rejected, it stays rejected no matter how long we keep trying. Five attempts
+# covers every success observed so far, and spending the budget is the signal for the caller to
+# start a new browser session rather than to keep waiting on this one.
+FARE_CHECK_MAX_ATTEMPTS = 5
 FARE_CHECK_BACKOFF_CAP_SECS = 10
 
 logger = get_logger(__name__)
@@ -137,13 +140,15 @@ def make_request_to_url(
         # Sleeping after the final attempt only delays the failure, which matters now that the
         # backoff reaches tens of seconds
         if attempts >= max_attempts:
-            logger.debug(
+            logger.info(
                 "Request error on attempt %d/%d: %s%s", attempts, max_attempts, error_msg, transient
             )
             break
 
         sleep_time = _backoff_duration(attempts, backoff_cap_secs) if random_sleep else 0.5
-        logger.debug(
+        # Logged at info: backoff can span minutes, and at debug level a retrying request is
+        # indistinguishable from a hung one in deployments that don't run verbose
+        logger.info(
             "Request error on attempt %d/%d: %s%s. Sleeping for %.2f seconds until next attempt",
             attempts,
             max_attempts,

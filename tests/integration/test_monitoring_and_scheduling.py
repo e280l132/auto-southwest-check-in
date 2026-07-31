@@ -89,6 +89,10 @@ def test_flight_is_scheduled_checks_in_and_departs(
 
     mocker.patch.object(WebDriver, "_get_driver", mock_get_driver)
 
+    # Reservations are looked up through the website first. This test covers the mobile fallback
+    # end to end (scheduling, check-in, departure), so send the website lookup straight to it.
+    mocker.patch.object(WebDriver, "get_reservation", side_effect=Exception("website unavailable"))
+
     reservation1 = {
         "viewReservationViewPage": {
             "bounds": [
@@ -192,6 +196,10 @@ def test_account_schedules_new_flights(requests_mock: RequestMocker, mocker: Moc
         return mock_driver
 
     mocker.patch.object(WebDriver, "_get_driver", mock_get_driver)
+
+    # Reservations are looked up through the website first. This test covers account login and the
+    # mobile fallback, so send the website lookup straight to it.
+    mocker.patch.object(WebDriver, "get_reservation", side_effect=Exception("website unavailable"))
 
     reservation = {
         "viewReservationViewPage": {

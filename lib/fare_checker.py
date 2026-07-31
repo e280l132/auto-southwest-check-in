@@ -479,8 +479,12 @@ class FareChecker:
             departure_date,
         )
 
-        # Each attempt is a fresh browser session, and driving several of them back to back
-        # (one per reservation, plus the reservation lookups) makes the occasional failure likely
+        # Each attempt is a fresh browser session. Driving sessions back to back (one per
+        # reservation, plus the reservation lookups) makes the occasional startup failure likely,
+        # and replaying a request Southwest has already rejected repeats an identical fingerprint,
+        # so a new session is the only retry with a different input. Measured, that is not enough
+        # on its own -- three fresh sessions have been rejected uniformly -- but it costs a third
+        # of what retrying inside one session did and is the only lever available here.
         max_attempts = 3
         response = None
         for attempt in range(
@@ -490,14 +494,24 @@ class FareChecker:
                 webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
                 response = webdriver.get_public_flight_prices(origin, destination, departure_date)
                 break
-            except DriverTimeoutError as err:
-                if attempt < max_attempts - 1:
-                    logger.debug(
-                        "Public search failed for %s (%s), retrying...",
+            except Exception as err:
+                is_transient = (
+                    isinstance(err, RequestError)
+                    and err.southwest_code == TRANSIENT_ORIGIN_REJECTION
+                )
+                # Anything else (a bad name, a cancelled reservation) will fail the same way in a
+                # new session, so don't spend two more browsers finding that out
+                retryable = is_transient or isinstance(err, DriverTimeoutError)
+
+                if retryable and attempt < max_attempts - 1:
+                    logger.info(
+                        "Public search failed for %s (%s). Retrying with a new browser session",
                         flight.confirmation_number,
                         err,
                     )
-                else:
+                    continue
+
+                if isinstance(err, DriverTimeoutError):
                     # Not always a timeout: the browser reaching the page but the response not
                     # carrying prices surfaces here too, so report what actually went wrong
                     logger.error(
@@ -515,7 +529,7 @@ class FareChecker:
                         message="Webdriver timeout",
                         paid_points=companion_fare_points,
                     )
-            except Exception as err:
+
                 logger.error(
                     "Public search fare check failed for %s: %s",
                     flight.confirmation_number,
@@ -524,12 +538,9 @@ class FareChecker:
                 self._log_companion_unavailable(flight, companion_fare_points, reason=str(err))
 
                 # Southwest's own origin rejects the request at this rate for a real browser too
-                # (measured), so a raw "Forbidden (403)" reads as this tool being broken when it's
-                # actually Southwest, and retrying sooner wouldn't have changed the outcome -- this
-                # already retried 20 times with backoff before giving up.
-                is_transient = isinstance(
-                    err, RequestError
-                ) and err.southwest_code == TRANSIENT_ORIGIN_REJECTION
+                # (measured), so a raw "Forbidden (403)" reads as this tool being broken when it is
+                # actually Southwest. By this point every attempt across several browser sessions
+                # was rejected, so there is nothing left to try now.
                 message = (
                     "Southwest rejected every attempt. This is usually temporary and not a "
                     "problem with the reservation — try checking again shortly."

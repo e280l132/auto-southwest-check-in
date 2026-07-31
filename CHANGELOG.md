@@ -31,6 +31,21 @@ to run only the UI)
 logged with a suggested correction instead of being silently ignored
 
 ### Bug Fixes
+- Retry a rejected fare search in a new browser session instead of replaying the rejected request
+twenty times. Replaying a request Southwest has already rejected repeats an identical fingerprint,
+so a failed check spent 147 seconds on twenty guaranteed-identical rejections before giving up.
+The retry budget per session is now 5 attempts (no successful search has ever needed more) and
+exhausting it starts a fresh session, which cuts a failed check to roughly a third of the time
+while trying three different sessions instead of one. Note this makes failures cheaper and faster,
+not rarer — Southwest can still reject every session
+- Look reservations up through the Southwest website first, falling back to the mobile API rather
+than the other way around. The mobile API rejects nearly every request while the website answers
+reliably, so leading with the mobile API cost about 55 seconds and an extra browser launch per
+reservation before the fallback ran. The mobile API is still consulted when the website can't
+answer, since its error codes are what distinguish a cancelled or mistyped reservation from
+Southwest simply refusing
+- Log request retries at info level. Backoff can span minutes, and at debug level a retrying
+request was indistinguishable from a hung one in deployments that don't run verbose logging
 - Fix a public fare search failure ("No resource with given identifier found") caused by reading
 the search response body back out of the browser via CDP, which races the page's lifecycle. The
 search now captures the request the page itself makes and repeats it directly, the same fix already

@@ -17,6 +17,7 @@ from lib.checkin_scheduler import RESERVATION_MAX_ATTEMPTS, CheckInScheduler
 from lib.config import GlobalConfig
 from lib.fare_checker import FareChecker, is_companion_flight
 from lib.flight import Flight
+from lib.notification_handler import NotificationLevel
 from lib.reservation_monitor import ReservationMonitor
 from lib.reservation_schema import translate_manage_reservation
 from lib.utils import TRANSIENT_ORIGIN_REJECTION, RequestError
@@ -144,22 +145,32 @@ def test_a_rejected_lookup_falls_back_to_the_website(
     assert scheduler.last_fetch_error is None
 
 
-def test_the_website_is_not_used_for_a_real_reservation_error(
+def test_a_real_reservation_error_is_still_reported(
     mocker: MockerFixture
 ) -> None:
-    """A cancelled or mistyped reservation is a real answer, so don't go asking the website too."""
+    """
+    A cancelled or mistyped reservation is a real answer, and only the mobile API says so — the
+    website lookup just fails without distinguishing it. So when the website can't answer, the
+    mobile API's verdict is what gets reported.
+    """
     # 400620389 == SouthwestErrorCode.RESERVATION_NOT_FOUND
     mocker.patch(
         "lib.checkin_scheduler.make_request",
         side_effect=RequestError("Reservation not found", southwest_code=400620389),
     )
-    mock_lookup = mocker.patch.object(WebDriver, "get_reservation")
-    mocker.patch("lib.notification_handler.NotificationHandler.failed_reservation_retrieval")
+    mocker.patch.object(WebDriver, "get_reservation", side_effect=Exception("no such reservation"))
+    mock_notify = mocker.patch(
+        "lib.notification_handler.NotificationHandler.failed_reservation_retrieval"
+    )
 
     scheduler = _scheduler()
     scheduler.process_reservations(["CW6KR4"])
 
-    mock_lookup.assert_not_called()
+    mock_notify.assert_called_once()
+    reported = mock_notify.call_args[0][0]
+    assert reported.southwest_code == 400620389, "the real error, not a transient rejection"
+    assert mock_notify.call_args[0][2] == NotificationLevel.ERROR, "reported the first time"
+    assert len(scheduler.flights) == 0
 
 
 def test_the_original_error_is_reported_when_the_website_also_fails(
@@ -180,12 +191,31 @@ def test_the_original_error_is_reported_when_the_website_also_fails(
     assert len(scheduler.flights) == 0
 
 
-def test_the_mobile_api_is_not_retried_into_the_ground_first(
+def test_the_mobile_api_is_not_touched_when_the_website_answers(
     mocker: MockerFixture
 ) -> None:
-    """The website answers reliably, so don't exhaust the endpoint that mostly says no first."""
+    """
+    The website answers reliably while the mobile API rejects nearly everything, so a successful
+    website lookup must not spend a single attempt on the endpoint that mostly says no. Measured,
+    that ordering is worth ~55s per reservation.
+    """
     mock_request = mocker.patch("lib.checkin_scheduler.make_request", side_effect=rejection())
     mocker.patch.object(WebDriver, "get_reservation", return_value=WEBSITE_DATA)
+
+    scheduler = _scheduler()
+    scheduler.process_reservations(["CW6KR4"])
+
+    mock_request.assert_not_called()
+    assert len(scheduler.flights) == 1
+
+
+def test_the_mobile_fallback_is_not_retried_into_the_ground(
+    mocker: MockerFixture
+) -> None:
+    """When the website can't answer, the endpoint that mostly says no gets a bounded budget."""
+    mock_request = mocker.patch("lib.checkin_scheduler.make_request", side_effect=rejection())
+    mocker.patch.object(WebDriver, "get_reservation", side_effect=Exception("driver blew up"))
+    mocker.patch("lib.notification_handler.NotificationHandler.failed_reservation_retrieval")
 
     scheduler = _scheduler()
     scheduler.process_reservations(["CW6KR4"])
