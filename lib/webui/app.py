@@ -334,6 +334,13 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         IgnoreManager().cleanup_confirmations(
             {r.confirmation_number for r in state.config.reservations}
         )
+
+        # Without this, the check-in daemon keeps monitoring (and notifying about) the deleted
+        # reservation under its old process until a manual reload or restart happens
+        from .. import app_control  # noqa: PLC0415 (avoid import cost when webui unused)
+
+        app_control.request_reload()
+
         return response
 
     # ------------------------------------------------------------------

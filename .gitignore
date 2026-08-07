@@ -4,6 +4,9 @@
 # Intellij / PyCharm
 .idea/
 
+# macOS
+.DS_Store
+
 # Program files
 config.json
 ignored_flights.json
