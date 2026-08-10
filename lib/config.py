@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+import uuid
+from datetime import date
 from difflib import get_close_matches
 from pathlib import Path
 from types import MappingProxyType
@@ -238,6 +241,10 @@ class GlobalConfig(Config):
         super().__init__()
         self.accounts = []
         self.reservations = []
+        self.fare_watches = []
+        # Defaults to the same cadence as retrieval_interval; only takes effect once fare_watches
+        # is non-empty
+        self.fare_watch_interval = 24 * 60 * 60
 
     @property
     def config_file_path(self) -> Path:
@@ -282,6 +289,13 @@ class GlobalConfig(Config):
             reservation_config = ReservationConfig()
             reservation_config.create(reservation_json, self)
             self.reservations.append(reservation_config)
+
+    def create_fare_watch_config(self, fare_watches: list[JSON]) -> None:
+        logger.debug("Creating configurations for %d fare watches", len(fare_watches))
+        for watch_json in fare_watches:
+            watch_config = FareWatchConfig()
+            watch_config.create(watch_json)
+            self.fare_watches.append(watch_config)
 
     def _get_config_file_path(self) -> Path:
         """
@@ -432,6 +446,31 @@ class GlobalConfig(Config):
                 raise ConfigError("'reservations' must be a list")
 
             self.create_reservation_config(reservations)
+
+        if "fare_watch_interval" in config:
+            fare_watch_interval = config["fare_watch_interval"]
+
+            if not isinstance(fare_watch_interval, int) or isinstance(fare_watch_interval, bool):
+                raise ConfigError("'fare_watch_interval' must be an integer")
+
+            if fare_watch_interval < 0:
+                logger.warning(
+                    "Setting 'fare_watch_interval' to 0 hours as %s hours is too low",
+                    fare_watch_interval,
+                )
+                fare_watch_interval = 0
+
+            # Convert hours to seconds
+            self.fare_watch_interval = fare_watch_interval * 3600
+            logger.debug("Setting fare watch interval to %s hours", fare_watch_interval)
+
+        if "fare_watches" in config:
+            fare_watches = config["fare_watches"]
+
+            if not isinstance(fare_watches, list):
+                raise ConfigError("'fare_watches' must be a list")
+
+            self.create_fare_watch_config(fare_watches)
 
 
 class AccountConfig(Config):
@@ -586,3 +625,110 @@ class NotificationConfig(Config):
 
             if not isinstance(self.twenty_four_hour_time, bool):
                 raise ConfigError("'24_hour_time' must be a boolean")
+
+
+AIRPORT_CODE_RE = re.compile(r"^[A-Z]{3}$")
+FARE_WATCH_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+class FareWatchConfig:
+    """
+    Watches a single unbooked origin/destination/date for a points price at or below a
+    threshold, independent of any reservation. Not a Config subclass: fare watches always alert
+    through the global notifications list (no per-watch notification config), so there is nothing
+    to merge from a GlobalConfig the way accounts and reservations merge.
+    """
+
+    def __init__(self) -> None:
+        self.id = None
+        self.name = None
+        self.origin = None
+        self.destination = None
+        self.date = None
+        self.max_points = None
+        self.nonstop_only = False
+        self.fare_types = None
+        self.flight_numbers = None
+        self.enabled = True
+
+    def create(self, config_json: JSON) -> None:
+        self.id = config_json.get("id") or uuid.uuid4().hex[:12]
+
+        if "name" in config_json:
+            if not isinstance(config_json["name"], str):
+                raise ConfigError("'name' in fare watch must be a string")
+            self.name = config_json["name"]
+
+        for key in ("origin", "destination"):
+            if key not in config_json:
+                raise ConfigError(f"'{key}' must be in every fare watch")
+
+            value = config_json[key]
+            if not isinstance(value, str) or not AIRPORT_CODE_RE.match(value.upper()):
+                raise ConfigError(f"'{key}' in fare watch must be a 3-letter airport code")
+
+            setattr(self, key, value.upper())
+
+        if "date" not in config_json:
+            raise ConfigError("'date' must be in every fare watch")
+
+        watch_date = config_json["date"]
+        if not isinstance(watch_date, str) or not FARE_WATCH_DATE_RE.match(watch_date):
+            raise ConfigError("'date' in fare watch must be in YYYY-MM-DD format")
+
+        try:
+            parsed_date = date.fromisoformat(watch_date)
+        except ValueError as err:
+            raise ConfigError(f"'date' in fare watch is not a valid date: {watch_date}") from err
+
+        self.date = watch_date
+
+        if "maxPoints" not in config_json:
+            raise ConfigError("'maxPoints' must be in every fare watch")
+
+        max_points = config_json["maxPoints"]
+        if (
+            not isinstance(max_points, int)
+            or isinstance(max_points, bool)
+            or max_points <= 0
+        ):
+            raise ConfigError("'maxPoints' in fare watch must be a positive integer")
+        self.max_points = max_points
+
+        if "nonstopOnly" in config_json:
+            if not isinstance(config_json["nonstopOnly"], bool):
+                raise ConfigError("'nonstopOnly' in fare watch must be a boolean")
+            self.nonstop_only = config_json["nonstopOnly"]
+
+        if "fareTypes" in config_json:
+            fare_types = config_json["fareTypes"]
+            if not isinstance(fare_types, list) or not all(
+                isinstance(f, str) for f in fare_types
+            ):
+                raise ConfigError("'fareTypes' in fare watch must be a list of strings")
+            self.fare_types = fare_types or None
+
+        if "flightNumbers" in config_json:
+            flight_numbers = config_json["flightNumbers"]
+            if not isinstance(flight_numbers, list) or not all(
+                isinstance(f, str) for f in flight_numbers
+            ):
+                raise ConfigError("'flightNumbers' in fare watch must be a list of strings")
+            self.flight_numbers = flight_numbers or None
+
+        if "enabled" in config_json:
+            if not isinstance(config_json["enabled"], bool):
+                raise ConfigError("'enabled' in fare watch must be a boolean")
+            self.enabled = config_json["enabled"]
+
+        # A watch for a date that has already passed can never produce a useful result, so it is
+        # disabled regardless of what 'enabled' says in the config.
+        if parsed_date < date.today():
+            logger.warning(
+                "Fare watch %s (%s→%s on %s) is in the past. Disabling it",
+                self.id,
+                self.origin,
+                self.destination,
+                self.date,
+            )
+            self.enabled = False

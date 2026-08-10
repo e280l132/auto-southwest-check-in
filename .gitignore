@@ -11,6 +11,8 @@
 config.json
 ignored_flights.json
 webui_last_results.json
+webui_last_watch_results.json
+fare_watch_state.json
 daemon.pid
 .coverage
 logs/

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Fare watches{% endblock %}
+
+{% block topbar_actions %}
+<div class="topbar-actions">
+    <a class="btn btn-secondary" href="{{ url_for('new_watch') }}">Add watch</a>
+    <button id="watch-check-all-btn" class="btn btn-primary" {% if not watches %}disabled{% endif %}>
+        Check all watches
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<p id="watch-check-all-status" class="status-text" role="status"></p>
+
+<p class="muted note">
+    Fare watches track a route and date you haven't booked, and alert when the price drops to or
+    below your threshold. Unlike flight tracking above, no reservation is needed.
+</p>
+
+{% if not watches %}
+<div class="empty-state">
+    <h2>No fare watches yet</h2>
+    <p>Add a route, date, and a points threshold to start watching for a deal.</p>
+    <a class="btn btn-primary" href="{{ url_for('new_watch') }}">Add your first watch</a>
+</div>
+{% endif %}
+
+<div class="cards">
+    {% for w in watches %}
+    <article class="card" data-watch-id="{{ w.id }}">
+
+        <header class="card-header">
+            <div class="card-heading">
+                <h2>{{ w.name or (w.origin + ' → ' + w.destination) }}</h2>
+                <p class="passenger">{{ w.origin }} &rarr; {{ w.destination }} on {{ w.date }}</p>
+            </div>
+            <div class="card-badges">
+                <span class="badge badge-mode">&le; {{ "{:,}".format(w.max_points) }} pts</span>
+                {% if w.nonstop_only %}<span class="badge badge-fare">Nonstop only</span>{% endif %}
+                {% if not w.enabled %}<span class="badge badge-status-error">disabled</span>{% endif %}
+            </div>
+            <div class="card-tools">
+                <button class="btn btn-primary btn-sm watch-check-btn"
+                        data-watch-id="{{ w.id }}" {% if not w.enabled %}disabled{% endif %}>
+                    Check now
+                </button>
+                <a class="btn btn-ghost btn-sm"
+                   href="{{ url_for('edit_watch', watch_id=w.id) }}">Edit</a>
+            </div>
+        </header>
+
+        <p class="status-text" id="watch-status-{{ w.id }}" role="status"></p>
+
+        {% if w.fare_types or w.flight_numbers %}
+        <p class="muted">
+            {% if w.fare_types %}Fare types: {{ w.fare_types|join(', ') }}{% endif %}
+            {% if w.fare_types and w.flight_numbers %} &middot; {% endif %}
+            {% if w.flight_numbers %}Flights: {{ w.flight_numbers|join(', ') }}{% endif %}
+        </p>
+        {% endif %}
+
+        {% if not w.last_check %}
+            <p class="muted no-check-yet">Not checked yet.</p>
+        {% elif w.last_check.status == 'error' %}
+            <p class="checked-at" data-timestamp="{{ w.last_check.checked_at }}">Last checked: {{ w.last_check.checked_at }}</p>
+            <p class="notice notice-error">
+                {{ w.last_check.message }}
+                {% if w.last_check.transient %}
+                Southwest is rejecting requests right now. This is usually temporary &mdash;
+                try again shortly.
+                {% endif %}
+            </p>
+        {% elif w.last_check.status == 'unavailable' %}
+            <p class="checked-at" data-timestamp="{{ w.last_check.checked_at }}">Last checked: {{ w.last_check.checked_at }}</p>
+            <p class="muted">{{ w.last_check.message or 'No pricing available for this route/date.' }}</p>
+        {% else %}
+            <p class="checked-at" data-timestamp="{{ w.last_check.checked_at }}">Last checked: {{ w.last_check.checked_at }}</p>
+
+            {% if w.last_check.status == 'hit' %}
+            <p class="notice notice-hint">
+                At least one flight is at or below {{ "{:,}".format(w.max_points) }} points
+                (lowest found: {{ "{:,}".format(w.last_check.lowest_points) if w.last_check.lowest_points is not none else '—' }}).
+            </p>
+            {% elif w.last_check.lowest_points is not none %}
+            <p class="muted">
+                Lowest price found: {{ "{:,}".format(w.last_check.lowest_points) }} pts
+                (threshold is {{ "{:,}".format(w.max_points) }}).
+            </p>
+            {% endif %}
+
+            {% if w.last_check.rows %}
+            <div class="table-scroll">
+                <table class="flights-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Flight</th>
+                            <th scope="col">Depart</th>
+                            <th scope="col">Stops</th>
+                            <th scope="col" class="num">Price</th>
+                            <th scope="col"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in w.last_check.rows %}
+                        <tr class="{% if row.is_hit %}row-cheaper{% endif %}">
+                            <td class="flight-cell">{{ row.flight_number }}</td>
+                            <td>{{ row.departure_time }}</td>
+                            <td>{{ row.stop_description }}</td>
+                            <td class="num">
+                                {% if row.points is not none %}
+                                    {{ "{:,}".format(row.points) }}
+                                {% else %}
+                                    <span class="muted">&mdash;</span>
+                                {% endif %}
+                            </td>
+                            <td>{% if row.is_hit %}<span class="tag tag-cheaper">at or below threshold</span>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        {% endif %}
+    </article>
+    {% endfor %}
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

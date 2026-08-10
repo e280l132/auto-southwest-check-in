@@ -15,8 +15,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ..config import GlobalConfig, ReservationConfig
+    from ..config import FareWatchConfig, GlobalConfig, ReservationConfig
     from ..fare_check_result import FareCheckResult
+    from ..fare_watch import FareWatchResult
     from .results_store import ResultsStore
 
 JSON = dict[str, Any]
@@ -259,6 +260,87 @@ def _result_view(
         "board": board,
         "cheaper_count": sum(1 for row in board if row["is_cheaper"] and not row["is_current"]),
         "alternatives": result.alternatives,
+    }
+
+
+# Every key a rendered fare-watch row is expected to have, same cache-invalidation trick as
+# FLIGHT_VIEW_KEYS above.
+WATCH_VIEW_KEYS = frozenset(
+    {
+        "flight_number",
+        "departure_time",
+        "stop_description",
+        "is_nonstop",
+        "points",
+        "is_hit",
+    }
+)
+
+
+def _is_watch_renderable(last_check: JSON) -> bool:
+    rows = last_check.get("rows")
+    if not isinstance(rows, list):
+        return False
+
+    return all(isinstance(row, dict) and WATCH_VIEW_KEYS <= row.keys() for row in rows)
+
+
+def watch_summary(watch: FareWatchConfig) -> JSON:
+    """Fare-watch-level view model, available immediately without running any check."""
+    return {
+        "id": watch.id,
+        "name": watch.name,
+        "origin": watch.origin,
+        "destination": watch.destination,
+        "date": watch.date,
+        "max_points": watch.max_points,
+        "nonstop_only": watch.nonstop_only,
+        "fare_types": watch.fare_types or [],
+        "flight_numbers": watch.flight_numbers or [],
+        "enabled": watch.enabled,
+    }
+
+
+def list_watches(config: GlobalConfig, results_store: ResultsStore) -> list[JSON]:
+    """
+    Build the watches page's view models: one per configured fare watch, merged with the last
+    known check result (if any) for that watch.
+    """
+    all_results = results_store.get_all()
+    views = []
+    for watch in config.fare_watches:
+        view = watch_summary(watch)
+        last_check = all_results.get(watch.id)
+
+        if last_check is not None and not _is_watch_renderable(last_check):
+            last_check = None
+
+        view["last_check"] = last_check
+        views.append(view)
+    return views
+
+
+def _watch_row(row: JSON) -> JSON:
+    """Turn one FareWatchChecker row into a display row."""
+    return {
+        "flight_number": row.get("displayNumber", ""),
+        "departure_time": row.get("departureTime", ""),
+        "stop_description": row.get("stopDescription", ""),
+        "is_nonstop": bool(row.get("isNonstop")),
+        "points": row.get("points"),
+        "is_hit": bool(row.get("isHit")),
+    }
+
+
+def build_watch_payload(result: FareWatchResult) -> JSON:
+    """Build the payload persisted to ResultsStore (and returned to the UI) after a watch check."""
+    return {
+        "checked_at": result.checked_at,
+        "status": result.status,
+        "message": result.message,
+        "transient": result.transient,
+        "lowest_points": result.lowest_points,
+        "rows": [_watch_row(row) for row in result.rows],
     }
 
 

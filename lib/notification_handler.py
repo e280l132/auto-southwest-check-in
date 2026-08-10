@@ -305,6 +305,53 @@ class NotificationHandler:
         logger.debug("Sending lower fare notification...")
         self.send_notification(message, NotificationLevel.INFO, [flight])
 
+    def fare_watch_hit(self, watch: Any, hits: list[dict[str, Any]]) -> None:
+        """
+        Send a digest notification listing every flight a fare watch found at or below its
+        threshold. Unlike lower_fare/alternate_fares, this has no Flight object or reservation to
+        anchor to -- a watch tracks a route, not a ticket -- so times are formatted directly
+        rather than through the FLIGHT_TIME placeholder.
+        """
+        watch_label = watch.name or watch.id
+        lines = [
+            f'Fare watch "{watch_label}" found {len(hits)} flight(s) at or below '
+            f"{watch.max_points:,} points ({watch.origin}→{watch.destination} on "
+            f"{watch.date}):\n"
+        ]
+
+        for row in hits:
+            departure_time = self._format_12hr(row.get("departureTime", ""))
+            stop_description = row.get("stopDescription", "")
+            points = row.get("points")
+            points_str = f"{points:,} PTS" if points is not None else "unknown"
+            lines.append(
+                f"  {row['displayNumber']}  {departure_time}  {stop_description}  {points_str}"
+            )
+
+        booking_url = (
+            "https://www.southwest.com/air/booking/select.html"
+            f"?originationAirportCode={watch.origin}&destinationAirportCode={watch.destination}"
+            f"&departureDate={watch.date}&adultPassengersCount=1&fareType=POINTS"
+            "&passengerType=ADULT&tripType=oneway&int=HOMEQBOMAIR"
+        )
+        lines.append(f"\nBook here: {booking_url}\n")
+
+        body = "\n".join(lines)
+        logger.debug("Sending fare watch hit notification for %s", watch.id)
+        self.send_notification(body, NotificationLevel.INFO)
+
+    def fare_watch_failure(
+        self, watch: Any, message: str, level: NotificationLevel = NotificationLevel.NOTICE
+    ) -> None:
+        prefix = "Error" if level >= NotificationLevel.ERROR else "Notice"
+        watch_label = watch.name or watch.id
+        body = (
+            f'{prefix}: Fare watch "{watch_label}" ({watch.origin}→{watch.destination} on '
+            f"{watch.date}) failed: {message}\n"
+        )
+        logger.debug("Sending fare watch failure notification for %s", watch.id)
+        self.send_notification(body, level)
+
     def healthchecks_success(self, data: str) -> None:
         if self.send_external and self.reservation_monitor.config.healthchecks_url is not None:
             requests.post(self.reservation_monitor.config.healthchecks_url, data=data)

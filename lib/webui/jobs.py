@@ -16,13 +16,13 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..log import get_logger
-from . import config_writer, runner, service
+from . import config_writer, runner, service, watch_runner
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from ..config import ReservationConfig
+    from ..config import FareWatchConfig, GlobalConfig, ReservationConfig
     from .results_store import ResultsStore
 
 JSON = dict[str, Any]
@@ -43,13 +43,18 @@ class JobManager:
         results_store: ResultsStore,
         config_path: Path,
         reload_config: Callable[[], None],
+        watch_results_store: ResultsStore | None = None,
+        get_config: Callable[[], GlobalConfig] | None = None,
     ) -> None:
         self._results_store = results_store
         self._config_path = config_path
         self._reload_config = reload_config
+        self._watch_results_store = watch_results_store
+        self._get_config = get_config
         self._jobs: JSON = {}
         self._jobs_lock = threading.Lock()
-        # Ensures only one webdriver session runs at a time, across all jobs.
+        # Ensures only one webdriver session runs at a time, across all jobs (reservation checks
+        # and fare watch checks alike).
         self._check_lock = threading.Lock()
 
     def start_single_check(self, reservation_config: ReservationConfig) -> str:
@@ -66,6 +71,19 @@ class JobManager:
         thread = threading.Thread(
             target=self._run_all, args=(job_id, reservation_configs), daemon=True
         )
+        thread.start()
+        return job_id
+
+    def start_watch_check(self, watch: FareWatchConfig) -> str:
+        job_id = self._create_job([watch.id])
+        thread = threading.Thread(target=self._run_watch_single, args=(job_id, watch), daemon=True)
+        thread.start()
+        return job_id
+
+    def start_watch_check_all(self, watches: list[FareWatchConfig]) -> str:
+        watch_ids = [watch.id for watch in watches]
+        job_id = self._create_job(watch_ids)
+        thread = threading.Thread(target=self._run_watch_all, args=(job_id, watches), daemon=True)
         thread.start()
         return job_id
 
@@ -231,5 +249,93 @@ class JobManager:
                 "Check-all job %s finished all %d reservation(s) in %.1fs",
                 job_id,
                 len(reservation_configs),
+                time.monotonic() - run_start,
+            )
+
+    def _run_watch_single(self, job_id: str, watch: FareWatchConfig) -> None:
+        queued_at = time.monotonic()
+        with self._check_lock:
+            wait_time = time.monotonic() - queued_at
+            if wait_time > 1:
+                logger.info(
+                    "Job %s waited %.1fs for the webdriver lock (another check was running)",
+                    job_id,
+                    wait_time,
+                )
+            self._update_job(job_id, status="running")
+            run_start = time.monotonic()
+            try:
+                payload = watch_runner.run_watch_check(
+                    watch, self._get_config(), self._watch_results_store
+                )
+                self._update_job(
+                    job_id,
+                    status="done",
+                    results={watch.id: payload},
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
+                logger.info("Job %s finished in %.1fs", job_id, time.monotonic() - run_start)
+            except Exception as err:
+                logger.exception("Web UI fare watch job %s failed for %s", job_id, watch.id)
+                self._update_job(
+                    job_id,
+                    status="error",
+                    error=str(err),
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                )
+
+    def _run_watch_all(self, job_id: str, watches: list[FareWatchConfig]) -> None:
+        queued_at = time.monotonic()
+        with self._check_lock:
+            wait_time = time.monotonic() - queued_at
+            if wait_time > 1:
+                logger.info(
+                    "Job %s waited %.1fs for the webdriver lock (another check was running)",
+                    job_id,
+                    wait_time,
+                )
+            self._update_job(job_id, status="running")
+            run_start = time.monotonic()
+            config = self._get_config()
+            results: JSON = {}
+            error = None
+            for watch in watches:
+                watch_start = time.monotonic()
+                try:
+                    payload = watch_runner.run_watch_check(watch, config, self._watch_results_store)
+                    results[watch.id] = payload
+                    logger.info(
+                        "Check-all fare watch job %s: %s finished in %.1fs",
+                        job_id,
+                        watch.id,
+                        time.monotonic() - watch_start,
+                    )
+                except Exception as err:
+                    logger.exception(
+                        "Web UI check-all fare watch job %s failed for %s", job_id, watch.id
+                    )
+                    payload = {
+                        "checked_at": datetime.now(timezone.utc).isoformat(),
+                        "status": "error",
+                        "message": str(err),
+                        "transient": False,
+                        "lowest_points": None,
+                        "rows": [],
+                    }
+                    self._watch_results_store.save_result(watch.id, payload)
+                    results[watch.id] = payload
+                    error = error or str(err)
+
+            self._update_job(
+                job_id,
+                status="done",
+                results=results,
+                error=error,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            logger.info(
+                "Check-all fare watch job %s finished all %d watch(es) in %.1fs",
+                job_id,
+                len(watches),
                 time.monotonic() - run_start,
             )

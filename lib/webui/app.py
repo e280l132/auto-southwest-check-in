@@ -22,12 +22,14 @@ from flask import (
     url_for,
 )
 
-from ..config import ConfigError, GlobalConfig, ReservationConfig
+from ..config import ConfigError, FareWatchConfig, GlobalConfig, ReservationConfig
 from ..ignore_manager import IgnoreManager
 from ..log import get_logger
 from . import config_writer, service
 from .jobs import JobManager
-from .results_store import ResultsStore
+from .results_store import RESULTS_FILE, ResultsStore
+
+WATCH_RESULTS_FILE = RESULTS_FILE.parent / "webui_last_watch_results.json"
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,6 +75,12 @@ class ConfigState:
                 return reservation_config
         return None
 
+    def find_watch(self, watch_id: str) -> FareWatchConfig | None:
+        for watch in self.config.fare_watches:
+            if watch.id == watch_id:
+                return watch
+        return None
+
     @staticmethod
     def _load() -> GlobalConfig:
         """
@@ -92,13 +100,48 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
     state = ConfigState(config)
 
     results_store = ResultsStore()
-    job_manager = JobManager(results_store, state.config_path, state.reload)
+    watch_results_store = ResultsStore(filepath=WATCH_RESULTS_FILE)
+    job_manager = JobManager(
+        results_store,
+        state.config_path,
+        state.reload,
+        watch_results_store=watch_results_store,
+        get_config=lambda: state.config,
+    )
 
     def _require_reservation(confirmation_number: str) -> ReservationConfig:
         reservation_config = state.find_reservation(confirmation_number)
         if reservation_config is None:
             abort(404, description=f"No tracked reservation '{confirmation_number}'")
         return reservation_config
+
+    def _require_watch(watch_id: str) -> FareWatchConfig:
+        watch = state.find_watch(watch_id)
+        if watch is None:
+            abort(404, description=f"No tracked fare watch '{watch_id}'")
+        return watch
+
+    def _stored_watch(watch_id: str) -> dict | None:
+        return next(
+            (
+                w
+                for w in config_writer.read_fare_watches(state.config_path)
+                if w.get("id") == watch_id
+            ),
+            None,
+        )
+
+    def _save_watches(fare_watches: list[dict], success_message: str) -> Response:
+        try:
+            config_writer.write_fare_watches(state.config_path, fare_watches)
+            state.reload()
+        except (OSError, ConfigError, ValueError) as err:
+            logger.exception("Failed to save fare watches")
+            flash(f"Could not save configuration: {err}", "error")
+            return redirect(url_for("list_watches"))
+
+        flash(success_message, "success")
+        return redirect(url_for("list_watches"))
 
     def _stored_reservation(confirmation_number: str) -> dict | None:
         """
@@ -165,12 +208,104 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             abort(404, description=f"No job with id '{job_id}'")
 
         if job["status"] == "done":
-            # The client reloads '/' right after seeing this, to show the result -- that one load
-            # should keep the result it just computed rather than immediately clearing it. Only
-            # "done" reloads (see app.js); "error" doesn't, so it doesn't need the flag.
+            # The client reloads the current page right after seeing this, to show the result --
+            # that one load should keep the result it just computed rather than immediately
+            # clearing it. Only "done" reloads (see app.js); "error" doesn't, so it doesn't need
+            # the flag. Both flags are set since this endpoint serves reservation and fare watch
+            # jobs alike and doesn't know which page is polling it.
             session["keep_results"] = True
+            session["keep_watch_results"] = True
 
         return jsonify(job)
+
+    # ------------------------------------------------------------------
+    # Fare watches
+    # ------------------------------------------------------------------
+
+    @app.route("/watches")
+    def list_watches() -> str:
+        if session.pop("keep_watch_results", False):
+            logger.debug("Keeping fare watch results for the post-check page load")
+        else:
+            watch_results_store.clear_all()
+
+        watches = service.list_watches(state.config, watch_results_store)
+        return render_template("watches.html", watches=watches)
+
+    @app.route("/watches/new")
+    def new_watch() -> str:
+        return render_template("watch_form.html", watch=None)
+
+    @app.route("/watches/<watch_id>/edit")
+    def edit_watch(watch_id: str) -> str:
+        _require_watch(watch_id)
+        stored = _stored_watch(watch_id)
+        if stored is None:
+            abort(404, description=f"No tracked fare watch '{watch_id}'")
+
+        return render_template("watch_form.html", watch=stored)
+
+    @app.route("/api/watches", methods=["POST"])
+    @_with_config_lock
+    def create_watch() -> Response:
+        try:
+            watch = config_writer.build_fare_watch(request.form)
+            config_writer.validate_fare_watch(watch)
+        except (ConfigError, ValueError) as err:
+            flash(str(err), "error")
+            return redirect(url_for("new_watch"))
+
+        fare_watches = config_writer.read_fare_watches(state.config_path)
+        fare_watches.append(watch)
+        return _save_watches(fare_watches, f"Added fare watch {watch.get('id')}")
+
+    @app.route("/api/watches/<watch_id>", methods=["POST"])
+    @_with_config_lock
+    def update_watch(watch_id: str) -> Response:
+        _require_watch(watch_id)
+
+        try:
+            submitted = config_writer.build_fare_watch(request.form)
+            watch = config_writer.merge_fare_watch(_stored_watch(watch_id) or {}, submitted)
+            config_writer.validate_fare_watch(watch)
+        except (ConfigError, ValueError) as err:
+            flash(str(err), "error")
+            return redirect(url_for("edit_watch", watch_id=watch_id))
+
+        fare_watches = [
+            watch if w.get("id") == watch_id else w
+            for w in config_writer.read_fare_watches(state.config_path)
+        ]
+
+        if watch["id"] != watch_id:
+            watch_results_store.delete_result(watch_id)
+
+        return _save_watches(fare_watches, f"Updated fare watch {watch['id']}")
+
+    @app.route("/api/watches/<watch_id>/delete", methods=["POST"])
+    @_with_config_lock
+    def delete_watch(watch_id: str) -> Response:
+        _require_watch(watch_id)
+
+        fare_watches = [
+            w for w in config_writer.read_fare_watches(state.config_path) if w.get("id") != watch_id
+        ]
+
+        response = _save_watches(fare_watches, f"Removed fare watch {watch_id}")
+        watch_results_store.delete_result(watch_id)
+        return response
+
+    @app.route("/api/watch-check/<watch_id>", methods=["POST"])
+    def check_watch(watch_id: str) -> Response:
+        watch = _require_watch(watch_id)
+        return jsonify({"job_id": job_manager.start_watch_check(watch)})
+
+    @app.route("/api/watch-check-all", methods=["POST"])
+    def check_watch_all() -> Response:
+        enabled_watches = [w for w in state.config.fare_watches if w.enabled]
+        if not enabled_watches:
+            abort(404, description="No enabled fare watches configured")
+        return jsonify({"job_id": job_manager.start_watch_check_all(enabled_watches)})
 
     # ------------------------------------------------------------------
     # Reservation editing

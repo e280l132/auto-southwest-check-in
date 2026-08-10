@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{% if watch %}Edit fare watch{% else %}Add fare watch{% endif %}{% endblock %}
+{% block content %}
+
+{% set watch_id = watch.id if watch else "" %}
+
+<p><a class="back-link" href="{{ url_for('list_watches') }}">&larr; Back to fare watches</a></p>
+
+<h2 class="page-title">{% if watch %}Edit fare watch{% else %}Add a fare watch{% endif %}</h2>
+
+<form class="card form"
+      method="post"
+      action="{% if watch %}{{ url_for('update_watch', watch_id=watch_id) }}{% else %}{{ url_for('create_watch') }}{% endif %}">
+
+    {% if watch %}<input type="hidden" name="id" value="{{ watch_id }}">{% endif %}
+
+    <fieldset>
+        <legend>Route</legend>
+
+        <label>
+            Name (optional)
+            <input type="text" name="name" value="{{ watch.name if watch and watch.name is defined else '' }}"
+                   placeholder="e.g. Thanksgiving MCO">
+        </label>
+
+        <div class="field-row">
+            <label>
+                Origin airport
+                <input type="text" name="origin" required maxlength="3" style="text-transform:uppercase"
+                       autocomplete="off" spellcheck="false"
+                       value="{{ watch.origin if watch else '' }}">
+            </label>
+            <label>
+                Destination airport
+                <input type="text" name="destination" required maxlength="3" style="text-transform:uppercase"
+                       autocomplete="off" spellcheck="false"
+                       value="{{ watch.destination if watch else '' }}">
+            </label>
+        </div>
+
+        <label>
+            Departure date
+            <input type="date" name="date" required value="{{ watch.date if watch else '' }}">
+        </label>
+        <p class="hint">One-way only. For a round trip, add a second watch for the return leg.</p>
+    </fieldset>
+
+    <fieldset>
+        <legend>Threshold</legend>
+
+        <label>
+            Alert at or below (points)
+            <input type="number" name="maxPoints" min="1" required placeholder="e.g. 8000"
+                   value="{{ watch.maxPoints if watch and watch.maxPoints is defined else '' }}">
+        </label>
+
+        <label class="checkbox-label">
+            <input type="checkbox" name="nonstopOnly"
+                   {% if watch and watch.nonstopOnly %}checked{% endif %}>
+            Nonstop flights only
+        </label>
+
+        <label class="checkbox-label">
+            <input type="checkbox" name="enabled"
+                   {% if not watch or watch.enabled|default(true) %}checked{% endif %}>
+            Enabled
+        </label>
+    </fieldset>
+
+    <fieldset>
+        <legend>Filters (optional)</legend>
+
+        <label>
+            Fare types
+            <input type="text" name="fareTypes"
+                   value="{{ watch.fareTypes|join(', ') if watch and watch.fareTypes is defined else '' }}"
+                   placeholder="e.g. WGA (comma-separated)">
+            <span class="hint">Leave blank to consider the cheapest fare product sold on each flight.</span>
+        </label>
+
+        <label>
+            Flight numbers
+            <input type="text" name="flightNumbers"
+                   value="{{ watch.flightNumbers|join(', ') if watch and watch.flightNumbers is defined else '' }}"
+                   placeholder="e.g. 1234, 5678 (comma-separated)">
+            <span class="hint">Leave blank to consider every flight that day.</span>
+        </label>
+    </fieldset>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+            {% if watch %}Save changes{% else %}Add watch{% endif %}
+        </button>
+        <a class="btn btn-ghost" href="{{ url_for('list_watches') }}">Cancel</a>
+    </div>
+</form>
+
+{% if watch %}
+<form class="danger-zone delete-watch-form"
+      method="post"
+      action="{{ url_for('delete_watch', watch_id=watch_id) }}"
+      data-watch-id="{{ watch_id }}">
+    <button type="submit" class="btn btn-danger">Remove this watch</button>
+    <span class="hint">Removes it from config.json and clears its cached results.</span>
+</form>
+{% endif %}
+
+<p class="muted note">
+    Changes are written to <code>config.json</code> and apply here immediately.
+    A running check-in daemon keeps its old configuration until it is restarted.
+    Alerts go to your existing <code>notifications</code> settings; there is no separate
+    notification config per watch.
+</p>
+
+{% endblock %}

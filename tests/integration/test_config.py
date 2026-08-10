@@ -169,3 +169,98 @@ def test_bool_is_rejected_for_integer_only_reservation_settings(
     global_config = GlobalConfig()
     with pytest.raises(ConfigError):
         global_config.initialize_or_raise()
+
+
+def test_fare_watch_config(mocker: MockerFixture) -> None:
+    config = {
+        "fare_watch_interval": 12,
+        "fare_watches": [
+            {
+                "id": "watch1",
+                "name": "Thanksgiving MCO",
+                "origin": "lga",
+                "destination": "mco",
+                "date": "2099-11-14",
+                "maxPoints": 8000,
+                "nonstopOnly": True,
+                "fareTypes": ["WGA"],
+                "flightNumbers": ["1234"],
+            },
+            {"origin": "JFK", "destination": "LAX", "date": "2099-01-01", "maxPoints": 10000},
+        ],
+    }
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps(config))
+
+    global_config = GlobalConfig()
+    global_config.initialize()
+
+    assert global_config.fare_watch_interval == 12 * 3600
+    assert len(global_config.fare_watches) == 2
+
+    watch_one = global_config.fare_watches[0]
+    assert watch_one.id == "watch1"
+    assert watch_one.name == "Thanksgiving MCO"
+    assert watch_one.origin == "LGA"
+    assert watch_one.destination == "MCO"
+    assert watch_one.date == "2099-11-14"
+    assert watch_one.max_points == 8000
+    assert watch_one.nonstop_only is True
+    assert watch_one.fare_types == ["WGA"]
+    assert watch_one.flight_numbers == ["1234"]
+    assert watch_one.enabled is True
+
+    watch_two = global_config.fare_watches[1]
+    assert watch_two.id  # auto-generated
+    assert watch_two.nonstop_only is False
+    assert watch_two.fare_types is None
+
+
+def test_fare_watch_in_the_past_is_disabled(mocker: MockerFixture) -> None:
+    config = {
+        "fare_watches": [
+            {"origin": "JFK", "destination": "LAX", "date": "2000-01-01", "maxPoints": 8000}
+        ]
+    }
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps(config))
+
+    global_config = GlobalConfig()
+    global_config.initialize()
+
+    assert global_config.fare_watches[0].enabled is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("origin", "LGAA"),
+        ("destination", "L"),
+        ("date", "11-14-2099"),
+        ("maxPoints", -100),
+        ("maxPoints", 0),
+        ("maxPoints", True),
+        ("nonstopOnly", "yes"),
+    ],
+)
+def test_invalid_fare_watch_settings_are_rejected(
+    mocker: MockerFixture, field: str, value: object
+) -> None:
+    watch = {"origin": "JFK", "destination": "LAX", "date": "2099-01-01", "maxPoints": 8000}
+    watch[field] = value
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"fare_watches": [watch]}))
+
+    global_config = GlobalConfig()
+    with pytest.raises(ConfigError):
+        global_config.initialize_or_raise()
+
+
+@pytest.mark.parametrize("missing_field", ["origin", "destination", "date", "maxPoints"])
+def test_fare_watch_missing_required_field_is_rejected(
+    mocker: MockerFixture, missing_field: str
+) -> None:
+    watch = {"origin": "JFK", "destination": "LAX", "date": "2099-01-01", "maxPoints": 8000}
+    del watch[missing_field]
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"fare_watches": [watch]}))
+
+    global_config = GlobalConfig()
+    with pytest.raises(ConfigError):
+        global_config.initialize_or_raise()

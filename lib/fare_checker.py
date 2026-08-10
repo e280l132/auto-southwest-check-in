@@ -275,25 +275,11 @@ class FareChecker:
 
     def _get_card_points(self, card: JSON, fare_type: str) -> int | None:
         """Extract the absolute points price for a fare type from a public search card."""
-        try:
-            total_fare = card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]
-        except (KeyError, TypeError):
-            return None
-
-        if total_fare.get("currencyCode") != "POINTS":
-            return None
-
-        try:
-            return int(str(total_fare.get("value", "")).replace(",", ""))
-        except (ValueError, TypeError):
-            return None
+        return get_card_points(card, fare_type)
 
     def _get_card_departure_time(self, card: JSON) -> str:
         """Public search reports either departureTime or a full departureDateTime."""
-        departure_time = card.get("departureTime") or card.get("departureDateTime", "")
-        if "T" in departure_time:
-            departure_time = departure_time.split("T")[1][:5]
-        return departure_time
+        return get_card_departure_time(card)
 
     def _get_card_stop_description(self, card: JSON) -> str:
         """
@@ -303,15 +289,7 @@ class FareChecker:
         Each entry in 'segments' is one marketing flight leg, so the number of connections is
         len(segments) - 1, and the layover airport is the first segment's destination.
         """
-        segments = card.get("segments") or []
-        stops = len(segments) - 1
-
-        if stops <= 0:
-            return "Nonstop"
-
-        connecting_airport = segments[0].get("destinationAirportCode", "")
-        label = f"{stops} Stop" + ("s" if stops != 1 else "")
-        return f"{label}, {connecting_airport}" if connecting_airport else label
+        return get_card_stop_description(card)
 
     def _check_all_alternate_fares(self, flight: Flight) -> FareCheckResult:
         """
@@ -771,14 +749,7 @@ class FareChecker:
 
     def _extract_cards_from_search_response(self, response: JSON) -> list[JSON] | None:
         """Extract flight cards from the public search API response."""
-        try:
-            return response["data"]["searchResults"]["airProducts"][0]["details"]
-        except KeyError as err:
-            logger.debug("Public search response missing expected key: %s", err)
-            return None
-        except (TypeError, IndexError) as err:
-            logger.debug("Public search response has unexpected structure: %s", err)
-            return None
+        return extract_cards_from_search_response(response)
 
     def _get_lowest_points_from_cards(
         self, cards: list[JSON], fare_type: str, flight: Flight
@@ -1033,6 +1004,103 @@ def any_flight_filter(*_) -> bool:
 
 def nonstop_flight_filter(_, flight_json: JSON) -> bool:
     return flight_json["stopDescription"] == "Nonstop"
+
+
+def extract_cards_from_search_response(response: JSON) -> list[JSON] | None:
+    """
+    Extract flight cards from the public search API response.
+
+    Module-level so other callers (e.g. fare watches) can reuse the same parsing without a
+    FareChecker/reservation instance.
+    """
+    try:
+        return response["data"]["searchResults"]["airProducts"][0]["details"]
+    except KeyError as err:
+        logger.debug("Public search response missing expected key: %s", err)
+        return None
+    except (TypeError, IndexError) as err:
+        logger.debug("Public search response has unexpected structure: %s", err)
+        return None
+
+
+def get_card_points(card: JSON, fare_type: str) -> int | None:
+    """Extract the absolute points price for a fare type from a public search card."""
+    try:
+        total_fare = card["fareProducts"]["ADULT"][fare_type]["fare"]["totalFare"]
+    except (KeyError, TypeError):
+        return None
+
+    if total_fare.get("currencyCode") != "POINTS":
+        return None
+
+    try:
+        return int(str(total_fare.get("value", "")).replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def get_card_departure_time(card: JSON) -> str:
+    """Public search reports either departureTime or a full departureDateTime."""
+    departure_time = card.get("departureTime") or card.get("departureDateTime", "")
+    if "T" in departure_time:
+        departure_time = departure_time.split("T")[1][:5]
+    return departure_time
+
+
+def get_card_stop_description(card: JSON) -> str:
+    """
+    Build a human-readable stop description for a public search card.
+
+    Unlike the change-shopping API, public search cards have no 'stopDescription' field. Each
+    entry in 'segments' is one marketing flight leg, so the number of connections is
+    len(segments) - 1, and the layover airport is the first segment's destination.
+    """
+    segments = card.get("segments") or []
+    stops = len(segments) - 1
+
+    if stops <= 0:
+        return "Nonstop"
+
+    connecting_airport = segments[0].get("destinationAirportCode", "")
+    label = f"{stops} Stop" + ("s" if stops != 1 else "")
+    return f"{label}, {connecting_airport}" if connecting_airport else label
+
+
+def search_public_flights_with_retry(
+    checkin_scheduler: Any, origin: str, destination: str, departure_date: str
+) -> JSON:
+    """
+    Drive Southwest's public flight search, retrying with a fresh browser session on transient
+    failures. Shared by the companion-fare fallback above and fare watches, both of which need
+    the exact same "how many times is it worth trying" policy documented in
+    FareChecker._check_companion_fare_via_webdriver.
+
+    Raises the last error (RequestError, DriverTimeoutError, or another exception) if every
+    attempt fails.
+    """
+    from .webdriver import WebDriver  # noqa: PLC0415 (avoids circular dependency)
+
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            webdriver = WebDriver(checkin_scheduler)
+            return webdriver.get_public_flight_prices(origin, destination, departure_date)
+        except Exception as err:
+            is_transient = (
+                isinstance(err, RequestError) and err.southwest_code == TRANSIENT_ORIGIN_REJECTION
+            )
+            retryable = is_transient or isinstance(err, DriverTimeoutError)
+
+            if retryable and attempt < max_attempts - 1:
+                logger.info(
+                    "Public search failed (%s). Retrying with a new browser session (%d/%d)",
+                    err,
+                    attempt + 2,
+                    max_attempts,
+                )
+                continue
+
+            raise
 
 
 def is_companion_flight(flight: Flight) -> bool:

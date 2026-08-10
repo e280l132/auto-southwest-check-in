@@ -35,7 +35,7 @@ RETRY_WAIT_SECONDS = 10
 logger = get_logger(__name__)
 
 
-def _escalation_level(failures: int) -> NotificationLevel:
+def escalation_level(failures: int) -> NotificationLevel:
     """
     Southwest being briefly unreachable is routine and self-heals next cycle, so an isolated
     failure is reported at NOTICE (filtered out by the default notification level). Only once it
@@ -128,7 +128,7 @@ class ReservationMonitor:
             self.header_refresh_failures += 1
             logger.warning("Timeout while refreshing headers. Skipping reservation retrieval")
             self.notification_handler.timeout_during_retrieval(
-                "reservation", _escalation_level(self.header_refresh_failures)
+                "reservation", escalation_level(self.header_refresh_failures)
             )
             return False
 
@@ -333,7 +333,7 @@ class AccountMonitor(ReservationMonitor):
                     )
                     self.login_retrieval_failures += 1
                     self.notification_handler.timeout_during_retrieval(
-                        "account", _escalation_level(self.login_retrieval_failures)
+                        "account", escalation_level(self.login_retrieval_failures)
                     )
 
             except LoginError as err:
@@ -352,7 +352,7 @@ class AccountMonitor(ReservationMonitor):
                         )
                         self.login_retrieval_failures += 1
                         self.notification_handler.too_many_requests_during_login(
-                            _escalation_level(self.login_retrieval_failures)
+                            escalation_level(self.login_retrieval_failures)
                         )
                 else:
                     logger.debug("Error logging in. %s. Exiting", err)

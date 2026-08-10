@@ -16,6 +16,10 @@
                     <span class="wordmark-sub">Auto Southwest Check-In</span>
                 </span>
             </a>
+            <nav class="topbar-nav">
+                <a href="{{ url_for('index') }}">Flights</a>
+                <a href="{{ url_for('list_watches') }}">Fare watches</a>
+            </nav>
             <div class="topbar-actions">
                 {% block topbar_actions %}{% endblock %}
                 <button id="reload-config-btn" class="btn btn-ghost btn-sm" type="button" title="Reload config.json so the check-in daemon picks up changes">

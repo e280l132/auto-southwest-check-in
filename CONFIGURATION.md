@@ -15,6 +15,8 @@ reservation-specific configurations).
     * [Test the Notifications](#test-the-notifications)
 - [Browser Path](#browser-path)
 - [Retrieval Interval](#retrieval-interval)
+- [Fare Watches](#fare-watches)
+    * [Fare Watch Interval](#fare-watch-interval)
 - [Ignore Server](#ignore-server)
     * [Ignore Server Port](#ignore-server-port)
     * [Ignore Server Base URL](#ignore-server-base-url)
@@ -162,6 +164,50 @@ disable account/fare monitoring, set this option to `0` (The account/fares will 
 ```json
 {
     "retrieval_interval": 24
+}
+```
+
+## Fare Watches
+Type: List of objects
+
+Fare watches track a route and date you have **not** booked, and email you when a flight's points price drops to or below a threshold. Unlike [Check Fares](#check-fares), no reservation or check-in is involved — this is purely a price alert for a route you might book later. Watches run automatically on [Fare Watch Interval](#fare-watch-interval), and can also be triggered on demand from the "Fare watches" page in the [Web UI](#web-ui).
+
+Alerts are sent to your existing [notifications](#notifications) — there is no separate notification config per watch. Once a flight drops to or below the threshold, you're alerted once; you're alerted again only if it drops further, not on every check while it stays qualified.
+
+```json
+{
+    "fare_watches": [
+        {
+            "name": "Thanksgiving MCO",
+            "origin": "LGA",
+            "destination": "MCO",
+            "date": "2026-11-14",
+            "maxPoints": 8000,
+            "nonstopOnly": true,
+            "fareTypes": ["WGA"],
+            "flightNumbers": ["1234"]
+        }
+    ]
+}
+```
+
+- `name` (optional, string): A label shown in the Web UI and notifications. Defaults to the watch's id.
+- `origin` / `destination` (required, string): 3-letter airport codes.
+- `date` (required, string): The one-way departure date, `YYYY-MM-DD`. A watch for a past date is automatically disabled. For a round trip, add a second watch for the return leg.
+- `maxPoints` (required, positive integer): Alert when a flight's points price is at or below this number.
+- `nonstopOnly` (optional, boolean, default `false`): Only consider nonstop flights.
+- `fareTypes` (optional, list of strings): Restrict which fare products (e.g. `"WGA"`) are considered. Omit to use the cheapest fare product sold on each flight.
+- `flightNumbers` (optional, list of strings): Restrict to specific flight numbers. Omit to consider every flight on that date.
+- `enabled` (optional, boolean, default `true`): Set to `false` to keep a watch in the config without checking it.
+
+### Fare Watch Interval
+Default: same as [Retrieval Interval](#retrieval-interval) \
+Type: Integer
+
+How often (in hours) fare watches are automatically checked. Only takes effect when `fare_watches` is non-empty.
+```json
+{
+    "fare_watch_interval": 12
 }
 ```
 

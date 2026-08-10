@@ -14,6 +14,8 @@ from lib import log
 
 from . import app_control
 from .config import IS_DOCKER, GlobalConfig, ReservationConfig
+from .fare_watch_monitor import FareWatchMonitor
+from .fare_watch_state import FareWatchState
 from .ignore_manager import IgnoreManager
 from .ignore_server import start_ignore_server
 from .reservation_monitor import AccountMonitor, ReservationMonitor
@@ -98,6 +100,13 @@ def set_up_reservations(config: GlobalConfig, lock: multiprocessing.Lock) -> Non
     for reservation in config.reservations:
         reservation_monitor = ReservationMonitor(reservation, lock)
         reservation_monitor.start()
+
+
+def set_up_fare_watches(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
+    if not config.fare_watches:
+        return
+
+    FareWatchMonitor(config, lock).start()
 
 
 def _extract_web_flags(arguments: list[str]) -> tuple[list[str], bool, bool, int | None]:
@@ -187,12 +196,15 @@ def _start_monitoring(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
     """Start a monitoring process for every account/reservation in the given config."""
     num_accounts = len(config.accounts)
     num_reservations = len(config.reservations)
+    num_fare_watches = len([w for w in config.fare_watches if w.enabled])
     logger.info(
-        "Monitoring %s %s and %s %s\n",
+        "Monitoring %s %s, %s %s, and %s fare %s\n",
         num_accounts,
         pluralize("account", num_accounts),
         num_reservations,
         pluralize("reservation", num_reservations),
+        num_fare_watches,
+        pluralize("watch", num_fare_watches),
     )
 
     # Remove ignore entries for reservations no longer in the config.
@@ -200,6 +212,10 @@ def _start_monitoring(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
     if config.reservations:
         active_confirmations = {r.confirmation_number for r in config.reservations}
         IgnoreManager().cleanup_confirmations(active_confirmations)
+
+    if config.fare_watches:
+        active_watch_ids = {w.id for w in config.fare_watches}
+        FareWatchState().prune(active_watch_ids)
 
     # Start the ignore server if any config uses same_day_smart fare checking. Idempotent, so
     # this is a no-op on a reload if it's already running. The server runs as a daemon thread in
@@ -211,6 +227,7 @@ def _start_monitoring(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
 
     set_up_accounts(config, lock)
     set_up_reservations(config, lock)
+    set_up_fare_watches(config, lock)
 
 
 def set_up_check_in(arguments: list[str]) -> None:

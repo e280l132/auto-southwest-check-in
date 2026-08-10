@@ -16,6 +16,7 @@ import json
 import os
 import tempfile
 import threading
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..config import ReservationConfig
@@ -85,7 +86,41 @@ def write_reservations(config_path: Path, reservations: list[JSON]) -> None:
     """
     config = read_config(config_path)
     config["reservations"] = reservations
+    _write_config(config_path, config)
+    logger.debug("Wrote %d reservations to the configuration file", len(reservations))
 
+
+def read_fare_watches(config_path: Path) -> list[JSON]:
+    """Read the raw 'fare_watches' list, without any Config parsing."""
+    fare_watches = read_config(config_path).get("fare_watches", [])
+    return fare_watches if isinstance(fare_watches, list) else []
+
+
+def validate_fare_watch(watch: JSON) -> None:
+    """
+    Validate a fare watch using the real config parser. Raises ConfigError on bad input.
+
+    Imported locally to avoid a circular import (lib.config doesn't import lib.webui, but keeping
+    the web UI's imports of it lazy matches how ReservationConfig is only imported here too).
+    """
+    from ..config import FareWatchConfig  # noqa: PLC0415
+
+    FareWatchConfig().create(dict(watch))
+
+
+def write_fare_watches(config_path: Path, fare_watches: list[JSON]) -> None:
+    """Replace only the 'fare_watches' key and write the file back atomically."""
+    config = read_config(config_path)
+    config["fare_watches"] = fare_watches
+    _write_config(config_path, config)
+    logger.debug("Wrote %d fare watches to the configuration file", len(fare_watches))
+
+
+def _write_config(config_path: Path, config: JSON) -> None:
+    """
+    Write the whole config dict back atomically. Shared by write_reservations and
+    write_fare_watches so both sections use the exact same crash-safe write.
+    """
     # Write to a temp file in the same directory so os.replace is atomic on the same filesystem,
     # which keeps a crash mid-write from truncating the user's config.
     directory = config_path.parent
@@ -112,8 +147,6 @@ def write_reservations(config_path: Path, reservations: list[JSON]) -> None:
             content = tmp_file.read()
         config_path.write_text(content)
         os.unlink(tmp_path)
-
-    logger.debug("Wrote %d reservations to the configuration file", len(reservations))
 
 
 def update_cached_flight(
@@ -208,6 +241,75 @@ def merge_reservation(stored: JSON, submitted: JSON) -> JSON:
     merged.update(submitted)
 
     # Preserve the original key order where possible so the file stays readable
+    ordered = {key: merged[key] for key in stored if key in merged}
+    ordered.update(merged)
+    return ordered
+
+
+FARE_WATCH_EDITABLE_FIELDS = (
+    "id",
+    "name",
+    "origin",
+    "destination",
+    "date",
+    "maxPoints",
+    "nonstopOnly",
+    "fareTypes",
+    "flightNumbers",
+    "enabled",
+)
+
+
+def build_fare_watch(form: dict[str, str]) -> JSON:
+    """
+    Build a fare watch dict from submitted form fields, keeping only editable keys and omitting
+    blanks so optional settings stay absent from the file rather than being written as null.
+    """
+    watch: JSON = {}
+
+    for field in ("id", "name", "date"):
+        value = (form.get(field) or "").strip()
+        if value:
+            watch[field] = value
+
+    # A new watch (no id in the form) needs one generated here, before validate_fare_watch runs,
+    # so the id that gets persisted to config.json is the same one FareWatchConfig.create would
+    # otherwise generate and discard.
+    watch.setdefault("id", uuid.uuid4().hex[:12])
+
+    for field in ("origin", "destination"):
+        value = (form.get(field) or "").strip()
+        if value:
+            watch[field] = value.upper()
+
+    max_points = (form.get("maxPoints") or "").strip()
+    if max_points:
+        watch["maxPoints"] = parse_number("maxPoints", max_points, as_int=True)
+
+    # Checkboxes only submit when checked, so absence means "off"/"disabled".
+    watch["nonstopOnly"] = form.get("nonstopOnly") == "on"
+    watch["enabled"] = form.get("enabled") == "on"
+
+    fare_types = (form.get("fareTypes") or "").strip()
+    if fare_types:
+        watch["fareTypes"] = [f.strip() for f in fare_types.split(",") if f.strip()]
+
+    flight_numbers = (form.get("flightNumbers") or "").strip()
+    if flight_numbers:
+        watch["flightNumbers"] = [f.strip() for f in flight_numbers.split(",") if f.strip()]
+
+    return watch
+
+
+def merge_fare_watch(stored: JSON, submitted: JSON) -> JSON:
+    """
+    Apply submitted form values onto a stored fare watch, the same way merge_reservation does for
+    reservations: editable fields come from the form (absent means "cleared"), everything else in
+    the stored entry is carried over untouched.
+    """
+    merged = {key: value for key, value in stored.items() if key not in FARE_WATCH_EDITABLE_FIELDS}
+    merged.update(submitted)
+
     ordered = {key: merged[key] for key in stored if key in merged}
     ordered.update(merged)
     return ordered
