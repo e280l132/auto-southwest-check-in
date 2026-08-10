@@ -204,7 +204,7 @@ def _start_monitoring(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
         num_reservations,
         pluralize("reservation", num_reservations),
         num_fare_watches,
-        pluralize("watch", num_fare_watches),
+        "watch" if num_fare_watches == 1 else "watches",
     )
 
     # Remove ignore entries for reservations no longer in the config.
