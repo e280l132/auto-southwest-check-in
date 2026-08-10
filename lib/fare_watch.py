@@ -28,18 +28,40 @@ JSON = dict[str, Any]
 
 logger = get_logger(__name__)
 
+# Friendly names for Southwest's fare product ids. Best-effort only: anything not listed here
+# renders as its raw id, so a Southwest rename shows up as an ugly column header rather than a
+# fare class silently disappearing from the board.
+FARE_CLASS_LABELS = {
+    "WGA": "Wanna Get Away",
+    "WGAP": "Wanna Get Away Plus",
+    "WGAPLUS": "Wanna Get Away Plus",
+    "ANY": "Anytime",
+    "ANYTIME": "Anytime",
+    "BUS": "Business Select",
+    "BUSINESS": "Business Select",
+    "BSS": "Business Select",
+}
 
-@dataclass
-class FareWatchRow:
-    """One flight card evaluated against a watch's threshold."""
 
-    flight_numbers: str
-    display_number: str
-    departure_time: str
-    stop_description: str
-    is_nonstop: bool
-    points: int | None
-    is_hit: bool
+def fare_class_label(fare_type: str) -> str:
+    """The display name for a fare product id, falling back to the id itself."""
+    return FARE_CLASS_LABELS.get(fare_type.upper(), fare_type)
+
+
+def cheapest_points(fares: JSON, fare_types: list[str] | None) -> int | None:
+    """
+    The cheapest price across the selected fare classes, or across every class sold when none are
+    selected.
+
+    Module-level so the web UI can re-derive it when the user changes their selection, without
+    re-running a search (see webui/service.list_watches).
+    """
+    if fare_types:
+        prices = [fares[fare_type] for fare_type in fare_types if fare_type in fares]
+    else:
+        prices = list(fares.values())
+
+    return min(prices, default=None)
 
 
 @dataclass
@@ -137,7 +159,16 @@ class FareWatchChecker:
         )
 
     def _build_rows(self, watch: FareWatchConfig, cards: list[JSON]) -> list[JSON]:
+        """
+        Build one row per flight on the board.
+
+        Every flight that survives the nonstop filter is included, whether or not the user has
+        selected it: the selection is an alert filter, not a search filter, so the board keeps
+        showing the full picture and the user can change their mind without re-running a check.
+        'isTracked' carries the selection through to alerting.
+        """
         rows = []
+        seen_fare_types = set()
 
         for card in cards:
             card_numbers = card.get("flightNumbers") or []
@@ -146,11 +177,13 @@ class FareWatchChecker:
             if watch.nonstop_only and not is_nonstop:
                 continue
 
-            if watch.flight_numbers and not (set(card_numbers) & set(watch.flight_numbers)):
-                continue
+            fares = self._card_fares(card)
+            seen_fare_types.update(fares)
 
-            points = self._cheapest_points(card, watch.fare_types)
-            is_hit = points is not None and points <= watch.max_points
+            points = self._cheapest_points(fares, watch.fare_types)
+            is_tracked = not watch.flight_numbers or bool(
+                set(card_numbers) & set(watch.flight_numbers)
+            )
 
             rows.append(
                 {
@@ -159,25 +192,40 @@ class FareWatchChecker:
                     "departureTime": get_card_departure_time(card),
                     "stopDescription": get_card_stop_description(card),
                     "isNonstop": is_nonstop,
+                    "fares": fares,
                     "points": points,
-                    "isHit": is_hit,
+                    "isTracked": is_tracked,
+                    "isHit": is_tracked and points is not None and points <= watch.max_points,
                 }
             )
+
+        # The only place Southwest's real fare product ids surface. Everything downstream
+        # discovers them from the data rather than hardcoding them, so this log is what to check
+        # when adding to FARE_CLASS_LABELS.
+        logger.debug("Fare products seen for watch %s: %s", watch.id, sorted(seen_fare_types))
 
         rows.sort(key=lambda row: row["departureTime"])
         return rows
 
-    def _cheapest_points(self, card: JSON, fare_types: list[str] | None) -> int | None:
+    def _card_fares(self, card: JSON) -> JSON:
         """
-        The cheapest points price across the requested fare products (or every product sold on
-        the card, when the watch doesn't restrict fare types).
+        Every fare product sold on this flight, as {fareProductId: points}.
+
+        Products that aren't priced in points (or are missing/malformed) are left out rather than
+        stored as None, so the presence of a key means there is a real price behind it.
         """
         products = card.get("fareProducts", {}).get("ADULT", {})
-        candidate_types = fare_types or list(products.keys())
+        if not isinstance(products, dict):
+            return {}
 
-        prices = [
-            price
-            for fare_type in candidate_types
-            if (price := get_card_points(card, fare_type)) is not None
-        ]
-        return min(prices, default=None)
+        fares = {}
+        for fare_type in products:
+            points = get_card_points(card, fare_type)
+            if points is not None:
+                fares[fare_type] = points
+
+        return fares
+
+    def _cheapest_points(self, fares: JSON, fare_types: list[str] | None) -> int | None:
+        """The cheapest price across the watch's selected fare classes. See cheapest_points."""
+        return cheapest_points(fares, fare_types)

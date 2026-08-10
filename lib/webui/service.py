@@ -12,7 +12,10 @@ request headers, or raw Southwest reservation JSON must never be added to a view
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING, Any
+
+from ..fare_watch import cheapest_points, fare_class_label
 
 if TYPE_CHECKING:
     from ..config import FareWatchConfig, GlobalConfig, ReservationConfig
@@ -271,8 +274,13 @@ WATCH_VIEW_KEYS = frozenset(
         "departure_time",
         "stop_description",
         "is_nonstop",
+        "fares",
         "points",
+        "is_tracked",
         "is_hit",
+        "previous_points",
+        "delta",
+        "lowest_ever",
     }
 )
 
@@ -287,6 +295,8 @@ def _is_watch_renderable(last_check: JSON) -> bool:
 
 def watch_summary(watch: FareWatchConfig) -> JSON:
     """Fare-watch-level view model, available immediately without running any check."""
+    days_until, is_expired = _days_until(watch.date)
+
     return {
         "id": watch.id,
         "name": watch.name,
@@ -298,7 +308,25 @@ def watch_summary(watch: FareWatchConfig) -> JSON:
         "fare_types": watch.fare_types or [],
         "flight_numbers": watch.flight_numbers or [],
         "enabled": watch.enabled,
+        "days_until": days_until,
+        "is_expired": is_expired,
     }
+
+
+def _days_until(watch_date: str) -> tuple[int | None, bool]:
+    """
+    Days from today to the watch's departure date, and whether it has already passed.
+
+    The date is validated at config load, but a malformed one must not take the page down, so an
+    unparseable date reads as "unknown, not expired".
+    """
+    try:
+        parsed = date.fromisoformat(watch_date)
+    except (ValueError, TypeError):
+        return None, False
+
+    days = (parsed - date.today()).days
+    return days, days < 0
 
 
 def list_watches(config: GlobalConfig, results_store: ResultsStore) -> list[JSON]:
@@ -315,9 +343,49 @@ def list_watches(config: GlobalConfig, results_store: ResultsStore) -> list[JSON
         if last_check is not None and not _is_watch_renderable(last_check):
             last_check = None
 
+        if last_check is not None:
+            last_check = _reapply_selection(last_check, watch)
+
         view["last_check"] = last_check
         views.append(view)
     return views
+
+
+def _reapply_selection(last_check: JSON, watch: FareWatchConfig) -> JSON:
+    """
+    Re-derive which rows are tracked (and therefore hitting) from the watch's *current* selection.
+
+    The stored result was computed with whatever selection was in effect when the check ran, so
+    without this the board would keep rendering the old selection until the next check -- meaning
+    the checkboxes a user just saved would immediately appear to reset. Prices come from the stored
+    per-class fares, so no new search is needed.
+    """
+    updated = dict(last_check)
+    rows = []
+
+    for row in last_check["rows"]:
+        points = cheapest_points(row.get("fares") or {}, watch.fare_types)
+        is_tracked = not watch.flight_numbers or row["flight_number"] in watch.flight_numbers
+
+        rows.append(
+            {
+                **row,
+                "points": points,
+                "is_tracked": is_tracked,
+                "is_hit": is_tracked and points is not None and points <= watch.max_points,
+            }
+        )
+
+    updated["rows"] = rows
+    updated["lowest_points"] = min(
+        (row["points"] for row in rows if row["points"] is not None), default=None
+    )
+    updated["status"] = (
+        last_check["status"]
+        if last_check["status"] in ("error", "unavailable")
+        else ("hit" if any(row["is_hit"] for row in rows) else "no_hit")
+    )
+    return updated
 
 
 def _watch_row(row: JSON) -> JSON:
@@ -327,20 +395,73 @@ def _watch_row(row: JSON) -> JSON:
         "departure_time": row.get("departureTime", ""),
         "stop_description": row.get("stopDescription", ""),
         "is_nonstop": bool(row.get("isNonstop")),
+        "fares": row.get("fares") or {},
         "points": row.get("points"),
+        "is_tracked": bool(row.get("isTracked")),
         "is_hit": bool(row.get("isHit")),
+        "previous_points": row.get("previousPoints"),
+        "delta": row.get("delta"),
+        "lowest_ever": row.get("lowestEver"),
     }
+
+
+def _fare_classes(rows: list[JSON]) -> list[JSON]:
+    """
+    The fare products to render columns for: every id seen across this check's rows, ordered by
+    price (cheapest class first) so the table reads left-to-right from cheapest to most expensive.
+
+    Discovered from the data rather than hardcoded -- Southwest's fare product ids are not
+    documented anywhere, and this is the only thing that knows which ones actually came back.
+    """
+    cheapest_by_type: JSON = {}
+    for row in rows:
+        for fare_type, points in (row.get("fares") or {}).items():
+            current = cheapest_by_type.get(fare_type)
+            if current is None or points < current:
+                cheapest_by_type[fare_type] = points
+
+    return [
+        {"id": fare_type, "label": fare_class_label(fare_type)}
+        for fare_type, _points in sorted(cheapest_by_type.items(), key=lambda item: item[1])
+    ]
 
 
 def build_watch_payload(result: FareWatchResult) -> JSON:
     """Build the payload persisted to ResultsStore (and returned to the UI) after a watch check."""
+    rows = [_watch_row(row) for row in result.rows]
+
     return {
         "checked_at": result.checked_at,
         "status": result.status,
         "message": result.message,
         "transient": result.transient,
         "lowest_points": result.lowest_points,
-        "rows": [_watch_row(row) for row in result.rows],
+        "fare_classes": _fare_classes(rows),
+        "rows": rows,
+    }
+
+
+def build_watch_summary(watches: list[JSON]) -> JSON:
+    """
+    Aggregate the watches page's headline numbers, mirroring build_summary for reservations.
+
+    'best_price' is the cheapest points price found across every checked watch, since that is the
+    number worth acting on.
+    """
+    checks = [view["last_check"] for view in watches if view["last_check"]]
+    lowest_prices = [
+        check["lowest_points"] for check in checks if check.get("lowest_points") is not None
+    ]
+    checked_times = [check["checked_at"] for check in checks]
+
+    hitting = sum(1 for check in checks if check.get("status") == "hit")
+
+    return {
+        "tracked_count": len(watches),
+        "checked_count": len(checks),
+        "hitting_count": hitting,
+        "best_price": min(lowest_prices, default=None),
+        "last_checked": max(checked_times, default=None),
     }
 
 

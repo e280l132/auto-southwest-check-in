@@ -113,9 +113,13 @@ def test_nonstop_only_filters_out_connecting_flights(
     assert [row["displayNumber"] for row in result.rows] == ["100"]
 
 
-def test_flight_numbers_filter_narrows_to_matching_cards(
+def test_flight_numbers_select_what_alerts_without_hiding_the_rest(
     mocker: MockerFixture, monitor: ReservationMonitor
 ) -> None:
+    """
+    A selection is an alert filter, not a search filter: the board must keep showing every flight
+    so the user can change their mind without re-running a check.
+    """
     mocker.patch(
         "lib.webdriver.WebDriver"
     ).return_value.get_public_flight_prices.return_value = _search_response(
@@ -125,7 +129,70 @@ def test_flight_numbers_filter_narrows_to_matching_cards(
     watch = make_watch(maxPoints=8000, flightNumbers=["200"])
     result = FareWatchChecker(monitor).check(watch, "2099-01-01T00:00:00")
 
-    assert [row["displayNumber"] for row in result.rows] == ["200/201"]
+    assert [row["displayNumber"] for row in result.rows] == ["100", "200/201"]
+
+    tracked = {row["displayNumber"]: row["isTracked"] for row in result.rows}
+    assert tracked == {"100": False, "200/201": True}
+
+    # Flight 100 is under the threshold but unselected, so it must not count as a hit
+    hits = {row["displayNumber"] for row in result.rows if row["isHit"]}
+    assert hits == {"200/201"}
+
+
+def test_no_selection_means_every_flight_is_tracked(
+    mocker: MockerFixture, monitor: ReservationMonitor
+) -> None:
+    mocker.patch(
+        "lib.webdriver.WebDriver"
+    ).return_value.get_public_flight_prices.return_value = _search_response(
+        SEARCH_RESPONSE_URL_CARDS
+    )
+
+    result = FareWatchChecker(monitor).check(make_watch(maxPoints=8000), "2099-01-01T00:00:00")
+
+    assert all(row["isTracked"] for row in result.rows)
+
+
+def test_every_fare_product_is_kept_per_flight(
+    mocker: MockerFixture, monitor: ReservationMonitor
+) -> None:
+    """The board needs each class's own price, not just the cheapest one."""
+    mocker.patch(
+        "lib.webdriver.WebDriver"
+    ).return_value.get_public_flight_prices.return_value = _search_response(
+        SEARCH_RESPONSE_URL_CARDS
+    )
+
+    result = FareWatchChecker(monitor).check(make_watch(), "2099-01-01T00:00:00")
+
+    by_flight = {row["displayNumber"]: row for row in result.rows}
+    assert by_flight["100"]["fares"] == {"WGA": 7500, "ANYTIME": 12000}
+    assert by_flight["200/201"]["fares"] == {"WGA": 6000}
+
+
+def test_fares_omit_products_that_are_not_priced_in_points(
+    mocker: MockerFixture, monitor: ReservationMonitor
+) -> None:
+    card = {
+        "flightNumbers": ["100"],
+        "departureTime": "08:00",
+        "filterTags": ["NONSTOP"],
+        "segments": [{"destinationAirportCode": "MCO"}],
+        "fareProducts": {
+            "ADULT": {
+                "WGA": {"fare": {"totalFare": {"value": "7,500", "currencyCode": "POINTS"}}},
+                "CASHONLY": {"fare": {"totalFare": {"value": "199.00", "currencyCode": "USD"}}},
+                "BROKEN": {},
+            }
+        },
+    }
+    mocker.patch(
+        "lib.webdriver.WebDriver"
+    ).return_value.get_public_flight_prices.return_value = _search_response([card])
+
+    result = FareWatchChecker(monitor).check(make_watch(), "2099-01-01T00:00:00")
+
+    assert result.rows[0]["fares"] == {"WGA": 7500}
 
 
 def test_fare_types_restricts_which_products_are_considered(

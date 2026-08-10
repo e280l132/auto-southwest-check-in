@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from ..checkin_scheduler import CheckInScheduler
 from ..fare_watch import FareWatchChecker
+from ..fare_watch_history import add_price_history
 from ..log import get_logger
 from ..notification_handler import NotificationHandler
 from . import service
@@ -51,6 +52,8 @@ def run_watch_check(
     checker = FareWatchChecker(context)
 
     result = checker.check(watch, checked_at)
+    add_price_history(watch.id, watch.date, result.rows, checked_at)
+
     payload = service.build_watch_payload(result)
     results_store.save_result(watch.id, payload)
     return payload

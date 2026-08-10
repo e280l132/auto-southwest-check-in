@@ -230,7 +230,11 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             watch_results_store.clear_all()
 
         watches = service.list_watches(state.config, watch_results_store)
-        return render_template("watches.html", watches=watches)
+        return render_template(
+            "watches.html",
+            watches=watches,
+            summary=service.build_watch_summary(watches),
+        )
 
     @app.route("/watches/new")
     def new_watch() -> str:
@@ -281,6 +285,41 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             watch_results_store.delete_result(watch_id)
 
         return _save_watches(fare_watches, f"Updated fare watch {watch['id']}")
+
+    @app.route("/api/watches/<watch_id>/selection", methods=["POST"])
+    @_with_config_lock
+    def update_watch_selection(watch_id: str) -> Response:
+        """
+        Save which flights and fare classes may raise an alert, as ticked on the board. Both are
+        alert filters only -- the board keeps showing every flight either way.
+        """
+        _require_watch(watch_id)
+        stored = _stored_watch(watch_id)
+        if stored is None:
+            abort(404, description=f"No tracked fare watch '{watch_id}'")
+
+        updated = config_writer.apply_fare_watch_selection(
+            stored,
+            request.form.getlist("flightNumbers"),
+            request.form.getlist("fareTypes"),
+        )
+
+        try:
+            config_writer.validate_fare_watch(updated)
+        except (ConfigError, ValueError) as err:
+            flash(str(err), "error")
+            return redirect(url_for("list_watches"))
+
+        fare_watches = [
+            updated if w.get("id") == watch_id else w
+            for w in config_writer.read_fare_watches(state.config_path)
+        ]
+
+        # The board the user just selected from is only in the results store, which list_watches
+        # clears on every load unless this flag is set. Without it, saving a selection would blank
+        # the very table it came from.
+        session["keep_watch_results"] = True
+        return _save_watches(fare_watches, "Updated what this watch alerts on")
 
     @app.route("/api/watches/<watch_id>/delete", methods=["POST"])
     @_with_config_lock

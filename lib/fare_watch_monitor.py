@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from .checkin_scheduler import CheckInScheduler
 from .fare_watch import FareWatchChecker, FareWatchResult
+from .fare_watch_history import add_price_history
 from .fare_watch_state import FareWatchState, flight_key
 from .log import get_logger
 from .notification_handler import NotificationHandler
@@ -84,6 +85,7 @@ class FareWatchMonitor:
                 continue
 
             result = checker.check(watch, checked_at)
+            add_price_history(watch.id, watch.date, result.rows, checked_at)
 
             if result.status in FAILURE_STATUSES:
                 self._handle_failure(watch, result)

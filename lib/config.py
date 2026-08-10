@@ -463,6 +463,11 @@ class GlobalConfig(Config):
             # Convert hours to seconds
             self.fare_watch_interval = fare_watch_interval * 3600
             logger.debug("Setting fare watch interval to %s hours", fare_watch_interval)
+        else:
+            # Fare watches follow the same cadence as everything else unless told otherwise.
+            # Resolved here rather than in __init__ so it picks up a user-set retrieval_interval,
+            # which _parse_config has already applied by this point.
+            self.fare_watch_interval = self.retrieval_interval
 
         if "fare_watches" in config:
             fare_watches = config["fare_watches"]
@@ -637,6 +642,12 @@ class FareWatchConfig:
     threshold, independent of any reservation. Not a Config subclass: fare watches always alert
     through the global notifications list (no per-watch notification config), so there is nothing
     to merge from a GlobalConfig the way accounts and reservations merge.
+
+    'flightNumbers' and 'fareTypes' are alert filters, not search filters: the board always shows
+    every flight found (subject to nonstopOnly), and these only decide which of them may trigger a
+    notification. Both are written by the checkboxes on the fare watch board rather than by hand --
+    fareTypes in particular holds Southwest's own fare product ids, which are only discoverable by
+    running a check.
     """
 
     def __init__(self) -> None:

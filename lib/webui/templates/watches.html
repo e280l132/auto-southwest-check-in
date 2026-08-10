@@ -13,6 +13,29 @@
 
 {% block content %}
 
+<section class="summary" aria-label="Summary">
+    <div class="stat">
+        <span class="stat-value">{{ summary.tracked_count }}</span>
+        <span class="stat-label">watches tracked</span>
+    </div>
+    <div class="stat {% if summary.hitting_count %}stat-good{% endif %}">
+        <span class="stat-value">{{ summary.hitting_count }}</span>
+        <span class="stat-label">at or below target</span>
+    </div>
+    <div class="stat {% if summary.best_price is not none %}stat-good{% endif %}">
+        <span class="stat-value">
+            {% if summary.best_price is not none %}{{ "{:,}".format(summary.best_price) }}{% else %}&mdash;{% endif %}
+        </span>
+        <span class="stat-label">best price found (pts)</span>
+    </div>
+    <div class="stat">
+        <span class="stat-value stat-value-sm" data-timestamp="{{ summary.last_checked or '' }}">
+            {% if summary.last_checked %}{{ summary.last_checked }}{% else %}never{% endif %}
+        </span>
+        <span class="stat-label">last checked</span>
+    </div>
+</section>
+
 <p id="watch-check-all-status" class="status-text" role="status"></p>
 
 <p class="muted note">
@@ -35,11 +58,17 @@
         <header class="card-header">
             <div class="card-heading">
                 <h2>{{ w.name or (w.origin + ' → ' + w.destination) }}</h2>
-                <p class="passenger">{{ w.origin }} &rarr; {{ w.destination }} on {{ w.date }}</p>
+                <p class="passenger">
+                    {{ w.origin }} &rarr; {{ w.destination }} on {{ w.date }}
+                    {% if w.days_until is not none and not w.is_expired %}
+                        &middot; in {{ w.days_until }} day{{ 's' if w.days_until != 1 }}
+                    {% endif %}
+                </p>
             </div>
             <div class="card-badges">
                 <span class="badge badge-mode">&le; {{ "{:,}".format(w.max_points) }} pts</span>
                 {% if w.nonstop_only %}<span class="badge badge-fare">Nonstop only</span>{% endif %}
+                {% if w.is_expired %}<span class="badge badge-status-unavailable">departed</span>{% endif %}
                 {% if not w.enabled %}<span class="badge badge-status-error">disabled</span>{% endif %}
             </div>
             <div class="card-tools">
@@ -54,16 +83,16 @@
 
         <p class="status-text" id="watch-status-{{ w.id }}" role="status"></p>
 
-        {% if w.fare_types or w.flight_numbers %}
-        <p class="muted">
-            {% if w.fare_types %}Fare types: {{ w.fare_types|join(', ') }}{% endif %}
-            {% if w.fare_types and w.flight_numbers %} &middot; {% endif %}
-            {% if w.flight_numbers %}Flights: {{ w.flight_numbers|join(', ') }}{% endif %}
-        </p>
-        {% endif %}
-
         {% if not w.last_check %}
             <p class="muted no-check-yet">Not checked yet.</p>
+            {% if w.flight_numbers or w.fare_types %}
+            <p class="muted">
+                Alerting on
+                {% if w.flight_numbers %}flight{{ 's' if w.flight_numbers|length != 1 }} {{ w.flight_numbers|join(', ') }}{% else %}all flights{% endif %}
+                {% if w.fare_types %} &middot; {{ w.fare_types|join(', ') }}{% endif %}.
+                Run a check to change this.
+            </p>
+            {% endif %}
         {% elif w.last_check.status == 'error' %}
             <p class="checked-at" data-timestamp="{{ w.last_check.checked_at }}">Last checked: {{ w.last_check.checked_at }}</p>
             <p class="notice notice-error">
@@ -81,7 +110,7 @@
 
             {% if w.last_check.status == 'hit' %}
             <p class="notice notice-hint">
-                At least one flight is at or below {{ "{:,}".format(w.max_points) }} points
+                At least one flight you're monitoring is at or below {{ "{:,}".format(w.max_points) }} points
                 (lowest found: {{ "{:,}".format(w.last_check.lowest_points) if w.last_check.lowest_points is not none else '—' }}).
             </p>
             {% elif w.last_check.lowest_points is not none %}
@@ -92,36 +121,95 @@
             {% endif %}
 
             {% if w.last_check.rows %}
-            <div class="table-scroll">
-                <table class="flights-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">Flight</th>
-                            <th scope="col">Depart</th>
-                            <th scope="col">Stops</th>
-                            <th scope="col" class="num">Price</th>
-                            <th scope="col"></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in w.last_check.rows %}
-                        <tr class="{% if row.is_hit %}row-cheaper{% endif %}">
-                            <td class="flight-cell">{{ row.flight_number }}</td>
-                            <td>{{ row.departure_time }}</td>
-                            <td>{{ row.stop_description }}</td>
-                            <td class="num">
-                                {% if row.points is not none %}
-                                    {{ "{:,}".format(row.points) }}
-                                {% else %}
-                                    <span class="muted">&mdash;</span>
-                                {% endif %}
-                            </td>
-                            <td>{% if row.is_hit %}<span class="tag tag-cheaper">at or below threshold</span>{% endif %}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+            <form class="selection-form" method="post"
+                  action="{{ url_for('update_watch_selection', watch_id=w.id) }}">
+
+                {% if w.last_check.fare_classes %}
+                <fieldset class="fare-class-picker">
+                    <legend>Fare classes to alert on</legend>
+                    {% for fare in w.last_check.fare_classes %}
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="fareTypes" value="{{ fare.id }}"
+                               {% if fare.id in w.fare_types %}checked{% endif %}>
+                        {{ fare.label }}
+                    </label>
+                    {% endfor %}
+                </fieldset>
+                {% endif %}
+
+                <div class="table-scroll">
+                    <table class="flights-table">
+                        <thead>
+                            <tr>
+                                <th scope="col" class="select-col">
+                                    <input type="checkbox" class="select-all-flights"
+                                           title="Select all / none" aria-label="Select all flights">
+                                </th>
+                                <th scope="col">Flight</th>
+                                <th scope="col">Depart</th>
+                                <th scope="col">Stops</th>
+                                {% for fare in w.last_check.fare_classes %}
+                                <th scope="col" class="num">{{ fare.label }}</th>
+                                {% endfor %}
+                                <th scope="col" class="num">Change</th>
+                                <th scope="col" class="num">Lowest seen</th>
+                                <th scope="col"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in w.last_check.rows %}
+                            <tr class="{% if row.is_hit %}row-cheaper{% elif not row.is_tracked %}row-untracked{% endif %}">
+                                <td class="select-col">
+                                    <input type="checkbox" name="flightNumbers" value="{{ row.flight_number }}"
+                                           class="flight-select"
+                                           {% if row.is_tracked %}checked{% endif %}
+                                           aria-label="Monitor flight {{ row.flight_number }}">
+                                </td>
+                                <td class="flight-cell">{{ row.flight_number }}</td>
+                                <td>{{ row.departure_time }}</td>
+                                <td>{{ row.stop_description }}</td>
+                                {% for fare in w.last_check.fare_classes %}
+                                <td class="num">
+                                    {% if row.fares.get(fare.id) is not none %}
+                                        <span class="{% if row.fares.get(fare.id) == row.points %}price-down{% endif %}">
+                                            {{ "{:,}".format(row.fares.get(fare.id)) }}
+                                        </span>
+                                    {% else %}
+                                        <span class="muted">&mdash;</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="num">
+                                    {% if row.delta is none or row.delta == 0 %}
+                                        <span class="muted">&mdash;</span>
+                                    {% else %}
+                                        <span class="{{ 'price-down' if row.delta < 0 else 'price-up' }}">
+                                            {{ "{:+,}".format(row.delta) }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td class="num">
+                                    {% if row.lowest_ever is not none %}
+                                        {{ "{:,}".format(row.lowest_ever) }}
+                                    {% else %}
+                                        <span class="muted">&mdash;</span>
+                                    {% endif %}
+                                </td>
+                                <td>{% if row.is_hit %}<span class="tag tag-cheaper">at or below threshold</span>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="form-actions selection-actions">
+                    <button type="submit" class="btn btn-primary btn-sm">Save what I'm monitoring</button>
+                    <span class="hint">
+                        Only ticked flights and fare classes can trigger an alert. Tick nothing to
+                        alert on everything. Unticked flights stay on the board either way.
+                    </span>
+                </div>
+            </form>
             {% endif %}
         {% endif %}
     </article>

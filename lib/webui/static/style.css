@@ -315,6 +315,34 @@ main {
 
 .row-current > td { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
 .row-cheaper > td { box-shadow: inset 3px 0 0 var(--green); }
+/* Flights the user isn't monitoring stay readable but recede — they can never raise an alert */
+.row-untracked > td { opacity: 0.5; }
+.flights-table .select-col { width: 2.5rem; text-align: center; }
+.flights-table .select-col input { width: auto; margin: 0; }
+
+/* ---------- Fare watch selection ---------- */
+
+.selection-form { margin-top: 0.8rem; }
+.fare-class-picker {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    padding: 0.6rem 0.85rem;
+    margin: 0 0 0.2rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.1rem;
+    align-items: center;
+}
+.fare-class-picker legend {
+    padding: 0 0.35rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+}
+.fare-class-picker .checkbox-label { font-size: 0.83rem; }
+.selection-actions { margin-top: 0.8rem; align-items: baseline; }
 
 .price-down { color: var(--green); font-weight: 650; }
 .price-up { color: var(--red); }
@@ -347,7 +375,14 @@ main {
     font-weight: 600;
 }
 .form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
-.checkbox-label { flex-direction: row !important; align-items: center; gap: 0.5rem !important; }
+/* Also used outside .form (the fare-class picker), so it sets display itself */
+.checkbox-label {
+    display: flex;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 0.5rem !important;
+    font-size: 0.85rem;
+}
 .checkbox-label input { width: auto; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 

@@ -246,6 +246,10 @@ def merge_reservation(stored: JSON, submitted: JSON) -> JSON:
     return ordered
 
 
+# The fields the add/edit form owns. 'fareTypes' and 'flightNumbers' are deliberately absent:
+# they are alert selections written from the fare watch board (see apply_fare_watch_selection),
+# and listing them here would make every unrelated edit of a watch's name or threshold clear the
+# user's selection, since merge treats an absent editable field as "cleared".
 FARE_WATCH_EDITABLE_FIELDS = (
     "id",
     "name",
@@ -254,8 +258,6 @@ FARE_WATCH_EDITABLE_FIELDS = (
     "date",
     "maxPoints",
     "nonstopOnly",
-    "fareTypes",
-    "flightNumbers",
     "enabled",
 )
 
@@ -290,15 +292,29 @@ def build_fare_watch(form: dict[str, str]) -> JSON:
     watch["nonstopOnly"] = form.get("nonstopOnly") == "on"
     watch["enabled"] = form.get("enabled") == "on"
 
-    fare_types = (form.get("fareTypes") or "").strip()
-    if fare_types:
-        watch["fareTypes"] = [f.strip() for f in fare_types.split(",") if f.strip()]
-
-    flight_numbers = (form.get("flightNumbers") or "").strip()
-    if flight_numbers:
-        watch["flightNumbers"] = [f.strip() for f in flight_numbers.split(",") if f.strip()]
-
     return watch
+
+
+def apply_fare_watch_selection(
+    stored: JSON, flight_numbers: list[str], fare_types: list[str]
+) -> JSON:
+    """
+    Set (or clear) a watch's alert selection, as ticked on the fare watch board.
+
+    An empty selection means "alert on everything", which is the absence of the key rather than an
+    empty list -- that keeps config.json free of no-op entries and matches how FareWatchConfig
+    already treats an empty list.
+    """
+    updated = dict(stored)
+
+    for key, values in (("flightNumbers", flight_numbers), ("fareTypes", fare_types)):
+        cleaned = [value.strip() for value in values if value.strip()]
+        if cleaned:
+            updated[key] = cleaned
+        else:
+            updated.pop(key, None)
+
+    return updated
 
 
 def merge_fare_watch(stored: JSON, submitted: JSON) -> JSON:

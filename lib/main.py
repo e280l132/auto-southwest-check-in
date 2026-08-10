@@ -14,6 +14,7 @@ from lib import log
 
 from . import app_control
 from .config import IS_DOCKER, GlobalConfig, ReservationConfig
+from .fare_watch_history import FareWatchHistory
 from .fare_watch_monitor import FareWatchMonitor
 from .fare_watch_state import FareWatchState
 from .ignore_manager import IgnoreManager
@@ -216,6 +217,7 @@ def _start_monitoring(config: GlobalConfig, lock: multiprocessing.Lock) -> None:
     if config.fare_watches:
         active_watch_ids = {w.id for w in config.fare_watches}
         FareWatchState().prune(active_watch_ids)
+        FareWatchHistory().prune(active_watch_ids)
 
     # Start the ignore server if any config uses same_day_smart fare checking. Idempotent, so
     # this is a no-op on a reload if it's already running. The server runs as a daemon thread in

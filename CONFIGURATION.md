@@ -195,10 +195,15 @@ Alerts are sent to your existing [notifications](#notifications) — there is no
 - `origin` / `destination` (required, string): 3-letter airport codes.
 - `date` (required, string): The one-way departure date, `YYYY-MM-DD`. A watch for a past date is automatically disabled. For a round trip, add a second watch for the return leg.
 - `maxPoints` (required, positive integer): Alert when a flight's points price is at or below this number.
-- `nonstopOnly` (optional, boolean, default `false`): Only consider nonstop flights.
-- `fareTypes` (optional, list of strings): Restrict which fare products (e.g. `"WGA"`) are considered. Omit to use the cheapest fare product sold on each flight.
-- `flightNumbers` (optional, list of strings): Restrict to specific flight numbers. Omit to consider every flight on that date.
+- `nonstopOnly` (optional, boolean, default `false`): Only consider nonstop flights. This one *is* a search filter — connecting flights are left off the board entirely.
 - `enabled` (optional, boolean, default `true`): Set to `false` to keep a watch in the config without checking it.
+
+The next two are **alert filters, not search filters**: the board always shows every flight found, and these only decide which of them may trigger an email. Both are normally set by ticking checkboxes on the fare watch board in the Web UI rather than by hand.
+
+- `flightNumbers` (optional, list of strings): Only these flights may alert. Omit to alert on every flight that day.
+- `fareTypes` (optional, list of strings): Only these fare products count toward the threshold. Omit to use the cheapest fare product sold on each flight.
+
+`fareTypes` values are Southwest's own fare product ids, which are not documented publicly and vary by route. Run a check and tick the fare classes on the board rather than guessing — the Web UI discovers them from the search response and shows a price column per class.
 
 ### Fare Watch Interval
 Default: same as [Retrieval Interval](#retrieval-interval) \

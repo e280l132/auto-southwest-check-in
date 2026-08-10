@@ -215,6 +215,26 @@ def test_fare_watch_config(mocker: MockerFixture) -> None:
     assert watch_two.fare_types is None
 
 
+def test_fare_watch_interval_inherits_retrieval_interval(mocker: MockerFixture) -> None:
+    """Documented behavior: watches follow the same cadence unless given their own."""
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"retrieval_interval": 6}))
+
+    global_config = GlobalConfig()
+    global_config.initialize()
+
+    assert global_config.fare_watch_interval == 6 * 3600
+
+
+def test_explicit_fare_watch_interval_wins(mocker: MockerFixture) -> None:
+    config = {"retrieval_interval": 6, "fare_watch_interval": 12}
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps(config))
+
+    global_config = GlobalConfig()
+    global_config.initialize()
+
+    assert global_config.fare_watch_interval == 12 * 3600
+
+
 def test_fare_watch_in_the_past_is_disabled(mocker: MockerFixture) -> None:
     config = {
         "fare_watches": [

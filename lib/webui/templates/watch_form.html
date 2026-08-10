@@ -67,25 +67,31 @@
         </label>
     </fieldset>
 
+    {% if watch %}
     <fieldset>
-        <legend>Filters (optional)</legend>
-
-        <label>
-            Fare types
-            <input type="text" name="fareTypes"
-                   value="{{ watch.fareTypes|join(', ') if watch and watch.fareTypes is defined else '' }}"
-                   placeholder="e.g. WGA (comma-separated)">
-            <span class="hint">Leave blank to consider the cheapest fare product sold on each flight.</span>
-        </label>
-
-        <label>
-            Flight numbers
-            <input type="text" name="flightNumbers"
-                   value="{{ watch.flightNumbers|join(', ') if watch and watch.flightNumbers is defined else '' }}"
-                   placeholder="e.g. 1234, 5678 (comma-separated)">
-            <span class="hint">Leave blank to consider every flight that day.</span>
-        </label>
+        <legend>What this alerts on</legend>
+        <p class="hint">
+            {% if watch.flightNumbers is defined and watch.flightNumbers %}
+                Flight{{ 's' if watch.flightNumbers|length != 1 }}
+                <strong>{{ watch.flightNumbers|join(', ') }}</strong>
+            {% else %}
+                <strong>All flights</strong>
+            {% endif %}
+            {% if watch.fareTypes is defined and watch.fareTypes %}
+                &middot; fare class{{ 'es' if watch.fareTypes|length != 1 }}
+                <strong>{{ watch.fareTypes|join(', ') }}</strong>
+            {% else %}
+                &middot; <strong>any fare class</strong>
+            {% endif %}.
+        </p>
+        <p class="hint">
+            Change this by ticking flights and fare classes on the
+            <a href="{{ url_for('list_watches') }}">fare watch board</a> after running a check.
+            Southwest's fare class names are only known once a search has returned them, which is
+            why they aren't typed in here.
+        </p>
     </fieldset>
+    {% endif %}
 
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">
