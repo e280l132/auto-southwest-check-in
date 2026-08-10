@@ -128,7 +128,7 @@
                 <fieldset class="fare-class-picker">
                     <legend>Fare classes to alert on</legend>
                     {% for fare in w.last_check.fare_classes %}
-                    <label class="checkbox-label">
+                    <label class="checkbox-label" {% if fare.tagline %}title="{{ fare.tagline }}"{% endif %}>
                         <input type="checkbox" name="fareTypes" value="{{ fare.id }}"
                                {% if fare.id in w.fare_types %}checked{% endif %}>
                         {{ fare.label }}
@@ -149,7 +149,7 @@
                                 <th scope="col">Depart</th>
                                 <th scope="col">Stops</th>
                                 {% for fare in w.last_check.fare_classes %}
-                                <th scope="col" class="num">{{ fare.label }}</th>
+                                <th scope="col" class="num" {% if fare.tagline %}title="{{ fare.tagline }}"{% endif %}>{{ fare.label }}</th>
                                 {% endfor %}
                                 <th scope="col" class="num">Change</th>
                                 <th scope="col" class="num">Lowest seen</th>

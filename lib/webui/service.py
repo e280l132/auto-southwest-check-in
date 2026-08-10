@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from ..fare_watch import cheapest_points, fare_class_label
+from ..fare_watch import FARE_CLASS_LABELS, cheapest_points, fare_class_label, fare_class_tagline
 
 if TYPE_CHECKING:
     from ..config import FareWatchConfig, GlobalConfig, ReservationConfig
@@ -407,8 +407,12 @@ def _watch_row(row: JSON) -> JSON:
 
 def _fare_classes(rows: list[JSON]) -> list[JSON]:
     """
-    The fare products to render columns for: every id seen across this check's rows, ordered by
-    price (cheapest class first) so the table reads left-to-right from cheapest to most expensive.
+    The fare products to render columns for: every id seen across this check's rows.
+
+    Ordered by Southwest's own tier order (Basic → Choice → Choice Preferred → Choice Extra) for
+    known ids, cheapest-first for anything unrecognized appended after -- a per-flight cheapest
+    price isn't a stable sort key (it can flip two known tiers' column order flight to flight),
+    but the tier order itself never does.
 
     Discovered from the data rather than hardcoded -- Southwest's fare product ids are not
     documented anywhere, and this is the only thing that knows which ones actually came back.
@@ -420,9 +424,21 @@ def _fare_classes(rows: list[JSON]) -> list[JSON]:
             if current is None or points < current:
                 cheapest_by_type[fare_type] = points
 
+    tier_order = list(FARE_CLASS_LABELS)
+
+    def sort_key(item: tuple[str, int]) -> tuple[int, int]:
+        fare_type, points = item
+        upper = fare_type.upper()
+        tier = tier_order.index(upper) if upper in tier_order else len(tier_order)
+        return (tier, points)
+
     return [
-        {"id": fare_type, "label": fare_class_label(fare_type)}
-        for fare_type, _points in sorted(cheapest_by_type.items(), key=lambda item: item[1])
+        {
+            "id": fare_type,
+            "label": fare_class_label(fare_type),
+            "tagline": fare_class_tagline(fare_type),
+        }
+        for fare_type, _points in sorted(cheapest_by_type.items(), key=sort_key)
     ]
 
 

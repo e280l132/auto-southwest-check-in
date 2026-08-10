@@ -28,24 +28,36 @@ JSON = dict[str, Any]
 
 logger = get_logger(__name__)
 
-# Friendly names for Southwest's fare product ids. Best-effort only: anything not listed here
-# renders as its raw id, so a Southwest rename shows up as an ugly column header rather than a
-# fare class silently disappearing from the board.
+# Friendly names for Southwest's fare product ids, confirmed against a live search response.
+# Southwest's four current tiers, cheapest to most expensive: Basic, Choice, Choice Preferred,
+# Choice Extra. Best-effort only: anything not listed here renders as its raw id, so an
+# unrecognized id shows up as an ugly column header rather than a fare class silently
+# disappearing from the board.
 FARE_CLASS_LABELS = {
-    "WGA": "Wanna Get Away",
-    "WGAP": "Wanna Get Away Plus",
-    "WGAPLUS": "Wanna Get Away Plus",
-    "ANY": "Anytime",
-    "ANYTIME": "Anytime",
-    "BUS": "Business Select",
-    "BUSINESS": "Business Select",
-    "BSS": "Business Select",
+    "WGARED": "Basic",
+    "PLURED": "Choice",
+    "ANYRED": "Choice Preferred",
+    "BUSRED": "Choice Extra",
+}
+
+# The one-line pitch Southwest itself uses for each tier, shown under the column header. Same
+# fallback rule as fare_class_label: an unrecognized id just gets no tagline.
+FARE_CLASS_TAGLINES = {
+    "WGARED": "Go for Less — seat assigned at check-in",
+    "PLURED": "Top Pick — standard seat included",
+    "ANYRED": "Earlier Access — preferred seat included",
+    "BUSRED": "All In — extra legroom seat included",
 }
 
 
 def fare_class_label(fare_type: str) -> str:
     """The display name for a fare product id, falling back to the id itself."""
     return FARE_CLASS_LABELS.get(fare_type.upper(), fare_type)
+
+
+def fare_class_tagline(fare_type: str) -> str:
+    """The one-line description for a fare product id, or '' when there isn't one."""
+    return FARE_CLASS_TAGLINES.get(fare_type.upper(), "")
 
 
 def cheapest_points(fares: JSON, fare_types: list[str] | None) -> int | None:
