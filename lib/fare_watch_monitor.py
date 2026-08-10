@@ -42,11 +42,16 @@ class FareWatchMonitor:
         # CheckInScheduler is reused purely as the WebDriver's config/notification sink -- fare
         # watches never schedule check-ins.
         self.checkin_scheduler = CheckInScheduler(self)
-        self.state = FareWatchState()
 
         # Consecutive failures per watch id. This process is long-lived, so this survives across
         # retrieval cycles without needing to be persisted.
         self._failures: dict[str, int] = {}
+
+        # FareWatchState is deliberately NOT an instance attribute: it holds a threading.Lock,
+        # which multiprocessing can't pickle when spawning the process (Python 3.14 changed the
+        # default start method to 'forkserver' on Linux, which pickles the target -- 'self' here
+        # -- instead of inheriting memory via fork). It carries no other state between calls (it
+        # re-reads its file each time), so a fresh instance per use costs nothing.
 
     def get_display_name(self) -> str:
         return "Fare Watches"
@@ -101,13 +106,15 @@ class FareWatchMonitor:
         Alert only for flights that either haven't been alerted on before, or have dropped in
         price since the last alert -- never every cycle a flight stays qualified.
         """
+        state = FareWatchState()
+
         new_hits = []
         for row in result.rows:
             if not row["isHit"]:
                 continue
 
             key = flight_key(watch.date, row["displayNumber"])
-            if self.state.should_alert(watch.id, key, row["points"]):
+            if state.should_alert(watch.id, key, row["points"]):
                 new_hits.append(row)
 
         if not new_hits:
@@ -120,7 +127,7 @@ class FareWatchMonitor:
         self.notification_handler.fare_watch_hit(watch, new_hits)
         for row in new_hits:
             key = flight_key(watch.date, row["displayNumber"])
-            self.state.record_alert(watch.id, key, row["points"])
+            state.record_alert(watch.id, key, row["points"])
 
     def _handle_failure(self, watch: FareWatchConfig, result: FareWatchResult) -> None:
         failures = self._failures.get(watch.id, 0) + 1
