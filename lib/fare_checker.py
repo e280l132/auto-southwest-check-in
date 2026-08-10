@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .fare_check_result import FareCheckResult
+from .fare_class_labels import fare_class_label
 from .log import get_logger
 from .utils import (
     FARE_CHECK_BACKOFF_CAP_SECS,
@@ -597,7 +598,10 @@ class FareChecker:
             return self._make_result(
                 flight,
                 status="unavailable",
-                message=f"No {fare_type} points fare available in public search results",
+                message=(
+                    f"No {fare_class_label(fare_type)} points fare available "
+                    "in public search results"
+                ),
                 paid_points=companion_fare_points,
                 board=board,
                 fare_type=fare_type,

@@ -15,7 +15,8 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from ..fare_watch import FARE_CLASS_LABELS, cheapest_points, fare_class_label, fare_class_tagline
+from ..fare_class_labels import FARE_CLASS_LABELS, fare_class_label, fare_class_tagline
+from ..fare_watch import cheapest_points
 
 if TYPE_CHECKING:
     from ..config import FareWatchConfig, GlobalConfig, ReservationConfig

@@ -23,6 +23,7 @@ from flask import (
 )
 
 from ..config import ConfigError, FareWatchConfig, GlobalConfig, ReservationConfig
+from ..fare_class_labels import fare_class_label
 from ..ignore_manager import IgnoreManager
 from ..log import get_logger
 from . import config_writer, service
@@ -96,6 +97,10 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
     app = Flask(__name__)
     # Only used to sign flash-message cookies for a local, unauthenticated UI.
     app.secret_key = os.urandom(32)
+    # Every template that shows a watch's raw fareTypes selection (not just the checked-fares
+    # board, which already goes through service.py) needs this to avoid printing Southwest's raw
+    # fare product ids (e.g. "PLURED") instead of a name a user recognizes.
+    app.jinja_env.filters["fare_label"] = fare_class_label
 
     state = ConfigState(config)
 

@@ -89,7 +89,7 @@
             <p class="muted">
                 Alerting on
                 {% if w.flight_numbers %}flight{{ 's' if w.flight_numbers|length != 1 }} {{ w.flight_numbers|join(', ') }}{% else %}all flights{% endif %}
-                {% if w.fare_types %} &middot; {{ w.fare_types|join(', ') }}{% endif %}.
+                {% if w.fare_types %} &middot; {{ w.fare_types|map('fare_label')|join(', ') }}{% endif %}.
                 Run a check to change this.
             </p>
             {% endif %}

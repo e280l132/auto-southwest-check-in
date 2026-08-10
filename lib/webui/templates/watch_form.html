@@ -79,7 +79,7 @@
             {% endif %}
             {% if watch.fareTypes is defined and watch.fareTypes %}
                 &middot; fare class{{ 'es' if watch.fareTypes|length != 1 }}
-                <strong>{{ watch.fareTypes|join(', ') }}</strong>
+                <strong>{{ watch.fareTypes|map('fare_label')|join(', ') }}</strong>
             {% else %}
                 &middot; <strong>any fare class</strong>
             {% endif %}.

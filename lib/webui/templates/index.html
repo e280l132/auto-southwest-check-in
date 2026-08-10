@@ -139,7 +139,7 @@
                 <div class="flight-head">
                     <h3>{{ f.route }}</h3>
                     <span class="muted">Flight {{ f.flight_number }} &middot; {{ f.local_departure_date }}</span>
-                    {% if f.fare_type %}<span class="badge badge-fare">{{ f.fare_type }}</span>{% endif %}
+                    {% if f.fare_type %}<span class="badge badge-fare">{{ f.fare_type|fare_label }}</span>{% endif %}
                     {% if f.is_companion %}<span class="badge badge-companion">companion</span>{% endif %}
                     <span class="badge badge-status-{{ f.status }}">{{ f.status.replace('_', ' ') }}</span>
                 </div>
