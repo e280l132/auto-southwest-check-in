@@ -23,3 +23,6 @@ venv/
 
 # From SeleniumBase
 downloaded_files/
+
+# Local-only Claude Code project instructions
+CLAUDE.md
