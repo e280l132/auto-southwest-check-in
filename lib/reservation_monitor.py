@@ -187,7 +187,7 @@ class ReservationMonitor:
                 )
                 results.append(self._make_skipped_result(flight, str(err)))
             except Exception as err:
-                logger.exception("Unexpected error during fare check: %s", repr(err))
+                logger.exception("Unexpected error during fare check")
                 self.notification_handler.healthchecks_fail(
                     f"Failed fare check,\nconfirmation number = {flight.confirmation_number}"
                 )
@@ -211,7 +211,7 @@ class ReservationMonitor:
 
         try:
             local_departure_date, display_time = flight.get_safe_display_fields()
-        except Exception:
+        except Exception:  # noqa: BLE001 - display fields are cosmetic; fall back to blanks
             local_departure_date, display_time = "", ""
 
         return FareCheckResult(

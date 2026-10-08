@@ -113,7 +113,7 @@ class Flight:
         return zoneinfo.ZoneInfo(airport_timezones[airport_code])
 
     def _convert_to_utc(self, flight_date: str, airport_timezone: Any) -> datetime:
-        flight_date = datetime.strptime(flight_date, "%Y-%m-%d %H:%M")
+        flight_date = datetime.strptime(flight_date, "%Y-%m-%d %H:%M")  # noqa: DTZ007 - tzinfo attached below
         self._local_departure_time = flight_date.replace(tzinfo=airport_timezone)
 
         utc_time = self._local_departure_time.astimezone(timezone.utc)

@@ -129,6 +129,6 @@ class IgnoreManager:
 
     def _cleanup(self, data: dict) -> None:
         """Remove entries whose flight date has already passed."""
-        today = date.today().isoformat()
+        today = date.today().isoformat()  # noqa: DTZ011 - flight dates are local calendar dates
         data["specific"] = [e for e in data["specific"] if e["date"] >= today]
         data["all_day"] = [e for e in data["all_day"] if e["date"] >= today]

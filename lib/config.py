@@ -557,9 +557,7 @@ class ReservationConfig(Config):
 
         if "originalFarePoints" in config:
             original_fare_points = config["originalFarePoints"]
-            if not isinstance(original_fare_points, int) or isinstance(
-                original_fare_points, bool
-            ):
+            if not isinstance(original_fare_points, int) or isinstance(original_fare_points, bool):
                 raise ConfigError("'originalFarePoints' must be an integer")
             if original_fare_points <= 0:
                 raise ConfigError("'originalFarePoints' must be a positive integer")
@@ -698,11 +696,7 @@ class FareWatchConfig:
             raise ConfigError("'maxPoints' must be in every fare watch")
 
         max_points = config_json["maxPoints"]
-        if (
-            not isinstance(max_points, int)
-            or isinstance(max_points, bool)
-            or max_points <= 0
-        ):
+        if not isinstance(max_points, int) or isinstance(max_points, bool) or max_points <= 0:
             raise ConfigError("'maxPoints' in fare watch must be a positive integer")
         self.max_points = max_points
 
@@ -713,9 +707,7 @@ class FareWatchConfig:
 
         if "fareTypes" in config_json:
             fare_types = config_json["fareTypes"]
-            if not isinstance(fare_types, list) or not all(
-                isinstance(f, str) for f in fare_types
-            ):
+            if not isinstance(fare_types, list) or not all(isinstance(f, str) for f in fare_types):
                 raise ConfigError("'fareTypes' in fare watch must be a list of strings")
             self.fare_types = fare_types or None
 
@@ -734,7 +726,7 @@ class FareWatchConfig:
 
         # A watch for a date that has already passed can never produce a useful result, so it is
         # disabled regardless of what 'enabled' says in the config.
-        if parsed_date < date.today():
+        if parsed_date < date.today():  # noqa: DTZ011 - flight dates are local calendar dates
             logger.warning(
                 "Fare watch %s (%s→%s on %s) is in the past. Disabling it",
                 self.id,

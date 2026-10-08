@@ -88,7 +88,7 @@ class FareWatchChecker:
             response = search_public_flights_with_retry(
                 self.monitor.checkin_scheduler, watch.origin, watch.destination, watch.date
             )
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - fare watch errors are reported, never fatal to the daemon
             is_transient = (
                 isinstance(err, RequestError) and err.southwest_code == TRANSIENT_ORIGIN_REJECTION
             )
@@ -168,7 +168,7 @@ class FareWatchChecker:
 
             rows.append(
                 {
-                    "flightNumbers": "​/​".join(card_numbers),
+                    "flightNumbers": "\u200b/\u200b".join(card_numbers),
                     "displayNumber": "/".join(card_numbers),
                     "departureTime": get_card_departure_time(card),
                     "stopDescription": get_card_stop_description(card),

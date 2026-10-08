@@ -143,9 +143,7 @@ def test_accounts_and_reservations_from_config(mocker: MockerFixture) -> None:
     mocker.patch("pathlib.Path.read_text", return_value=json.dumps(config))
 
     mock_process = mocker.patch("multiprocessing.Process").return_value
-    mocker.patch(
-        "multiprocessing.active_children", side_effect=[[mock_process, mock_process], []]
-    )
+    mocker.patch("multiprocessing.active_children", side_effect=[[mock_process, mock_process], []])
     mocker.patch("lib.main.start_web_ui_background")
 
     main.main(["--no-web"], "test_version")

@@ -53,9 +53,7 @@ def not_found() -> RequestError:
 @pytest.fixture(autouse=True)
 def _fast_and_offline(mocker: MockerFixture) -> None:
     mocker.patch("time.sleep")
-    mocker.patch(
-        "pathlib.Path.read_text", return_value=json.dumps({"LAX": "America/Los_Angeles"})
-    )
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"LAX": "America/Los_Angeles"}))
     mocker.patch("lib.checkin_handler.Process").return_value.pid = 12345
     mocker.patch("os.kill")
     mocker.patch("os.waitpid")

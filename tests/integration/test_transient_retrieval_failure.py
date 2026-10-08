@@ -46,9 +46,7 @@ RESERVATION = {
 
 
 def _set_up(mocker: MockerFixture) -> GlobalConfig:
-    mocker.patch(
-        "pathlib.Path.read_text", return_value=json.dumps({"LAX": "America/Los_Angeles"})
-    )
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"LAX": "America/Los_Angeles"}))
     mocker.patch("lib.checkin_handler.Process").return_value.pid = 12345
     mocker.patch("lib.notification_handler.NotificationHandler.new_flights")
     mocker.patch("lib.notification_handler.NotificationHandler.reaccommodated_flights")

@@ -53,10 +53,10 @@ class FareChecker:
 
         try:
             flight_price = self._get_flight_price(flight)
-        except FlightChangeError as err:
+        except FlightChangeError:
             if not self._is_reaccommodated(flight):
                 return self._check_fare_via_public_search(flight)
-            raise err
+            raise
 
         price_info = f"{flight_price['amount']:+,} {flight_price['currencyCode']}"
         logger.debug("Flight price change found for %s", price_info)
@@ -81,7 +81,7 @@ class FareChecker:
         # the same table shape regardless of which check_fares mode produced the result.
         current_entry = self._board_entry(
             flight_numbers=flight.flight_number,
-            display_number=flight.flight_number.replace("​", ""),
+            display_number=flight.flight_number.replace("\u200b", ""),
             departure_time=flight.get_safe_display_fields()[1],
             stop_description="Nonstop" if self._is_nonstop(flight) else "",
             is_current=True,
@@ -325,7 +325,7 @@ class FareChecker:
 
             logger.info("Skipping alternate fare check for flight %s: %s", conf, err)
             return self._make_result(flight, status="skipped", message=str(err))
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - one bad alternate-fare lookup must not stop monitoring
             logger.error("Error checking alternate fares for flight %s: %s", conf, err)
             return self._make_result(flight, status="error", message=str(err))
 
@@ -473,7 +473,7 @@ class FareChecker:
                 webdriver = WebDriver(self.reservation_monitor.checkin_scheduler)
                 response = webdriver.get_public_flight_prices(origin, destination, departure_date)
                 break
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - any error from the fare lookup is retried or reported
                 is_transient = (
                     isinstance(err, RequestError)
                     and err.southwest_code == TRANSIENT_ORIGIN_REJECTION
@@ -590,8 +590,7 @@ class FareChecker:
 
         if lowest_points is None:
             logger.info(
-                "Fare check for flight %s: no %s points fare available "
-                "in public search results.",
+                "Fare check for flight %s: no %s points fare available in public search results.",
                 flight.confirmation_number,
                 fare_type,
             )

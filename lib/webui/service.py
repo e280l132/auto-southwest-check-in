@@ -324,14 +324,14 @@ def _days_until(watch_date: str) -> tuple[int | None, bool]:
     Days from today to the watch's departure date, and whether it has already passed.
 
     The date is validated at config load, but a malformed one must not take the page down, so an
-    unparseable date reads as "unknown, not expired".
+    unparsable date reads as "unknown, not expired".
     """
     try:
         parsed = date.fromisoformat(watch_date)
     except (ValueError, TypeError):
         return None, False
 
-    days = (parsed - date.today()).days
+    days = (parsed - date.today()).days  # noqa: DTZ011 - flight dates are local calendar dates
     return days, days < 0
 
 

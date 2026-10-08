@@ -29,9 +29,9 @@ def test_account_login_timeout_stays_quiet_until_it_keeps_happening(mocker: Mock
     config.create_account_config([{"username": "test_user", "password": "test_pass"}])
     monitor = AccountMonitor(config.accounts[0], mock.Mock())
 
-    mocker.patch("lib.reservation_monitor.WebDriver").return_value.get_reservations.side_effect = (
-        DriverTimeoutError("timed out")
-    )
+    mocker.patch(
+        "lib.reservation_monitor.WebDriver"
+    ).return_value.get_reservations.side_effect = DriverTimeoutError("timed out")
     mock_notify = mocker.patch(
         "lib.notification_handler.NotificationHandler.timeout_during_retrieval"
     )

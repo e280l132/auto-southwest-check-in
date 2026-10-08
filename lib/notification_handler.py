@@ -259,11 +259,16 @@ class NotificationHandler:
             return f"{url}&token={ignore_token}" if ignore_token else url
 
         lines = [
-            f"Cheaper flights found for {conf} "
-            f"({flight.departure_airport} \u2192 {flight.destination_airport} on {flight_date}) "
-            f"for {self._get_account_name()}!\n",
-            f"Current flight: {flight.flight_number.replace(chr(0x200B), '')} "
-            f"at {FLIGHT_TIME_PLACEHOLDER}\n",
+            (
+                f"Cheaper flights found for {conf} "
+                f"({flight.departure_airport} \u2192 {flight.destination_airport} "
+                f"on {flight_date}) "
+                f"for {self._get_account_name()}!\n"
+            ),
+            (
+                f"Current flight: {flight.flight_number.replace(chr(0x200B), '')} "
+                f"at {FLIGHT_TIME_PLACEHOLDER}\n"
+            ),
             "Cheaper options:",
         ]
 
@@ -314,9 +319,11 @@ class NotificationHandler:
         """
         watch_label = watch.name or watch.id
         lines = [
-            f'Fare watch "{watch_label}" found {len(hits)} flight(s) at or below '
-            f"{watch.max_points:,} points ({watch.origin}→{watch.destination} on "
-            f"{watch.date}):\n"
+            (
+                f'Fare watch "{watch_label}" found {len(hits)} flight(s) at or below '
+                f"{watch.max_points:,} points ({watch.origin}→{watch.destination} on "
+                f"{watch.date}):\n"
+            )
         ]
 
         for row in hits:
@@ -367,7 +374,7 @@ class NotificationHandler:
     def _format_12hr(time_str: str) -> str:
         """Convert a 24-hour time string like '20:00' to 12-hour format like '8:00 PM'."""
         try:
-            dt = datetime.strptime(time_str, "%H:%M")
+            dt = datetime.strptime(time_str, "%H:%M")  # noqa: DTZ007 - only the time of day is formatted
             fmt = "%#I:%M %p" if os.name == "nt" else "%-I:%M %p"
             return dt.strftime(fmt)
         except (ValueError, TypeError):

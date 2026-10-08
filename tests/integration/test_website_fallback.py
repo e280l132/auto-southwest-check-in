@@ -97,9 +97,7 @@ def test_translation_refuses_an_unexpected_payload() -> None:
 @pytest.fixture(autouse=True)
 def _offline(mocker: MockerFixture) -> None:
     mocker.patch("time.sleep")
-    mocker.patch(
-        "pathlib.Path.read_text", return_value=json.dumps({"STL": "America/Chicago"})
-    )
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"STL": "America/Chicago"}))
     mocker.patch("lib.checkin_handler.Process").return_value.pid = 12345
     mocker.patch("os.kill")
     mocker.patch("os.waitpid")
@@ -126,9 +124,7 @@ def _scheduler() -> "ReservationMonitor":
     return ReservationMonitor(config.reservations[0], lock=None).checkin_scheduler
 
 
-def test_a_rejected_lookup_falls_back_to_the_website(
-    mocker: MockerFixture
-) -> None:
+def test_a_rejected_lookup_falls_back_to_the_website(mocker: MockerFixture) -> None:
     mocker.patch("lib.checkin_scheduler.make_request", side_effect=rejection())
     mock_lookup = mocker.patch.object(WebDriver, "get_reservation", return_value=WEBSITE_DATA)
     mock_notify = mocker.patch(
@@ -145,9 +141,7 @@ def test_a_rejected_lookup_falls_back_to_the_website(
     assert scheduler.last_fetch_error is None
 
 
-def test_a_real_reservation_error_is_still_reported(
-    mocker: MockerFixture
-) -> None:
+def test_a_real_reservation_error_is_still_reported(mocker: MockerFixture) -> None:
     """
     A cancelled or mistyped reservation is a real answer, and only the mobile API says so — the
     website lookup just fails without distinguishing it. So when the website can't answer, the
@@ -173,9 +167,7 @@ def test_a_real_reservation_error_is_still_reported(
     assert len(scheduler.flights) == 0
 
 
-def test_the_original_error_is_reported_when_the_website_also_fails(
-    mocker: MockerFixture
-) -> None:
+def test_the_original_error_is_reported_when_the_website_also_fails(mocker: MockerFixture) -> None:
     mocker.patch("lib.checkin_scheduler.make_request", side_effect=rejection())
     mocker.patch.object(WebDriver, "get_reservation", side_effect=Exception("driver blew up"))
     mock_notify = mocker.patch(
@@ -191,9 +183,7 @@ def test_the_original_error_is_reported_when_the_website_also_fails(
     assert len(scheduler.flights) == 0
 
 
-def test_the_mobile_api_is_not_touched_when_the_website_answers(
-    mocker: MockerFixture
-) -> None:
+def test_the_mobile_api_is_not_touched_when_the_website_answers(mocker: MockerFixture) -> None:
     """
     The website answers reliably while the mobile API rejects nearly everything, so a successful
     website lookup must not spend a single attempt on the endpoint that mostly says no. Measured,
@@ -209,9 +199,7 @@ def test_the_mobile_api_is_not_touched_when_the_website_answers(
     assert len(scheduler.flights) == 1
 
 
-def test_the_mobile_fallback_is_not_retried_into_the_ground(
-    mocker: MockerFixture
-) -> None:
+def test_the_mobile_fallback_is_not_retried_into_the_ground(mocker: MockerFixture) -> None:
     """When the website can't answer, the endpoint that mostly says no gets a bounded budget."""
     mock_request = mocker.patch("lib.checkin_scheduler.make_request", side_effect=rejection())
     mocker.patch.object(WebDriver, "get_reservation", side_effect=Exception("driver blew up"))

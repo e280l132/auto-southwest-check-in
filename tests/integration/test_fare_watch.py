@@ -216,9 +216,9 @@ def test_fare_types_restricts_which_products_are_considered(
 def test_unavailable_when_response_has_no_recognizable_cards(
     mocker: MockerFixture, monitor: ReservationMonitor
 ) -> None:
-    mocker.patch(
-        "lib.webdriver.WebDriver"
-    ).return_value.get_public_flight_prices.return_value = {"data": {}}
+    mocker.patch("lib.webdriver.WebDriver").return_value.get_public_flight_prices.return_value = {
+        "data": {}
+    }
 
     watch = make_watch()
     result = FareWatchChecker(monitor).check(watch, "2099-01-01T00:00:00")

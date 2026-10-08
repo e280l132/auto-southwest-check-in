@@ -44,15 +44,11 @@ def test_the_cache_does_not_leak_stale_data_between_different_mocked_files(
     previous test survived, a new airport code that only the OLD test's data knew about would
     resolve, and a code only THIS test's data knows about would wrongly KeyError or vice versa.
     """
-    mocker.patch(
-        "pathlib.Path.read_text", return_value=json.dumps({"LAX": "America/Los_Angeles"})
-    )
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"LAX": "America/Los_Angeles"}))
     assert _load_airport_timezones() == {"LAX": "America/Los_Angeles"}
 
     # Simulate moving to a "new test" without relying on conftest.py's fixture firing mid-test
     clear_airport_timezone_cache()
-    mocker.patch(
-        "pathlib.Path.read_text", return_value=json.dumps({"SYD": "Australia/Sydney"})
-    )
+    mocker.patch("pathlib.Path.read_text", return_value=json.dumps({"SYD": "Australia/Sydney"}))
 
     assert _load_airport_timezones() == {"SYD": "Australia/Sydney"}

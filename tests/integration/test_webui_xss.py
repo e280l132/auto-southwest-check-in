@@ -87,9 +87,7 @@ def test_ignore_server_escapes_query_string_values(mocker: MockerFixture, tmp_pa
     ignore_server_module.start_ignore_server(port, manager, token=None)
     time.sleep(0.3)  # give the daemon thread a moment to bind and start serving
 
-    query = urlencode(
-        {"conf": ELEMENT_INJECTION_PAYLOAD, "date": "2026-08-21", "flight": "100"}
-    )
+    query = urlencode({"conf": ELEMENT_INJECTION_PAYLOAD, "date": "2026-08-21", "flight": "100"})
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/ignore?{query}", timeout=5) as resp:
         body = resp.read().decode()
 

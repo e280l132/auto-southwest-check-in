@@ -46,9 +46,7 @@ def test_a_failed_reservation_in_check_all_is_saved_to_results_store(
     assert "BAD" in saved_confirmations
 
     bad_payload = next(
-        call.args[1]
-        for call in results_store.save_result.call_args_list
-        if call.args[0] == "BAD"
+        call.args[1] for call in results_store.save_result.call_args_list if call.args[0] == "BAD"
     )
     assert bad_payload["error"] == "webdriver blew up"
     # Must match the shape build_check_payload produces elsewhere, not a hand-rolled dict missing

@@ -335,7 +335,7 @@ class WebDriver:
         login_button = "button#submit"
         try:
             seleniumbase_actions.wait_for_element_not_visible(driver, login_button, timeout=5)
-        except Exception:
+        except Exception:  # noqa: BLE001 - selenium raises many types; a timeout here is expected
             logger.debug("Login form failed to submit. Clicking login button again")
             driver.click(login_button)
 
@@ -599,7 +599,7 @@ class WebDriver:
                 logger.debug("Started virtual display successfully")
             else:
                 logger.debug("Started virtual display but is not active")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - virtual display is optional; log and continue
             logger.debug("Failed to start display: %s", e)
 
     @staticmethod

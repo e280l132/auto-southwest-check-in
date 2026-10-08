@@ -232,9 +232,7 @@ class JobManager:
                         checked_at=datetime.now(timezone.utc).isoformat(),
                         error=str(err),
                     )
-                    self._results_store.save_result(
-                        reservation_config.confirmation_number, payload
-                    )
+                    self._results_store.save_result(reservation_config.confirmation_number, payload)
                     results[reservation_config.confirmation_number] = payload
                     error = error or str(err)
 

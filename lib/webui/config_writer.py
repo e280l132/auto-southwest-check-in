@@ -56,7 +56,7 @@ def read_config(config_path: Path) -> JSON:
 
     config = json.loads(config_path.read_text())
     if not isinstance(config, dict):
-        raise ValueError("Configuration must be a JSON dictionary")
+        raise ValueError("Configuration must be a JSON dictionary")  # noqa: TRY004 - callers catch ValueError
 
     return config
 
