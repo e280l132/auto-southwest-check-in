@@ -193,20 +193,22 @@ def _absolute_points(
     return None
 
 
-def _board_row(entry: JSON, paid_points: int | None) -> JSON:
+def _board_row(entry: JSON, paid_points: int | None, nonstop_only: bool) -> JSON:
     """
     Turn one FareChecker board entry into a display row. Only presentation math happens here —
-    whether a flight counts as cheaper was already decided by FareChecker.
+    whether a flight counts as cheaper is decided by FareChecker, mirroring _cheaper_from_board:
+    a nonstop current flight only treats nonstop alternatives as cheaper.
     """
     difference = entry.get("difference")
+    is_nonstop = bool(entry.get("isNonstop"))
 
     return {
         "flight_number": entry.get("displayNumber", ""),
         "departure_time": entry.get("departureTime", ""),
         "stop_description": entry.get("stopDescription", ""),
         "is_current": bool(entry.get("isCurrent")),
-        "is_cheaper": bool(entry.get("isCheaper")),
-        "is_nonstop": bool(entry.get("isNonstop")),
+        "is_cheaper": bool(entry.get("isCheaper")) and (is_nonstop or not nonstop_only),
+        "is_nonstop": is_nonstop,
         "unavailable": bool(entry.get("unavailable")),
         "points": _absolute_points(entry.get("points"), difference, paid_points),
         "difference": difference,
@@ -225,7 +227,10 @@ def _result_view(
     """
     paid_points_for_flight = result.paid_points if result.paid_points is not None else paid_points
 
-    board = [_board_row(entry, paid_points_for_flight) for entry in result.board]
+    current_entry = next((entry for entry in result.board if entry.get("isCurrent")), None)
+    nonstop_only = bool(current_entry and current_entry.get("isNonstop"))
+
+    board = [_board_row(entry, paid_points_for_flight, nonstop_only) for entry in result.board]
     current_row = next((row for row in board if row["is_current"]), None)
 
     # Prefer the current flight's own board entry; fall back to the top-level result for modes
