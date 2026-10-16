@@ -331,7 +331,7 @@ def _days_until(watch_date: str) -> tuple[int | None, bool]:
     except (ValueError, TypeError):
         return None, False
 
-    days = (parsed - date.today()).days  # noqa: DTZ011 - flight dates are local calendar dates
+    days = (parsed - date.today()).days
     return days, days < 0
 
 

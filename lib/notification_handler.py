@@ -374,7 +374,7 @@ class NotificationHandler:
     def _format_12hr(time_str: str) -> str:
         """Convert a 24-hour time string like '20:00' to 12-hour format like '8:00 PM'."""
         try:
-            dt = datetime.strptime(time_str, "%H:%M")  # noqa: DTZ007 - only the time of day is formatted
+            dt = datetime.strptime(time_str, "%H:%M")
             fmt = "%#I:%M %p" if os.name == "nt" else "%-I:%M %p"
             return dt.strftime(fmt)
         except (ValueError, TypeError):

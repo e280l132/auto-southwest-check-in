@@ -726,7 +726,7 @@ class FareWatchConfig:
 
         # A watch for a date that has already passed can never produce a useful result, so it is
         # disabled regardless of what 'enabled' says in the config.
-        if parsed_date < date.today():  # noqa: DTZ011 - flight dates are local calendar dates
+        if parsed_date < date.today():
             logger.warning(
                 "Fare watch %s (%s→%s on %s) is in the past. Disabling it",
                 self.id,
