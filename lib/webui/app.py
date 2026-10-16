@@ -175,13 +175,18 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         flash(success_message, "success")
         return redirect(url_for("index"))
 
+    def _is_browser_request() -> bool:
+        """Whether this load came from a real browser rather than a health/uptime probe."""
+        return "Mozilla" in request.headers.get("User-Agent", "")
+
     @app.route("/")
     def index() -> str:
         # Fare-check results are cleared on every page load except the one right after a check
         # finishes (flagged below in job_status), so a plain browser refresh always starts clean.
+        # Uptime monitors poll this page too; they must not wipe results the user is about to see.
         if session.pop("keep_results", False):
             logger.debug("Keeping fare-check results for the post-check page load")
-        else:
+        elif _is_browser_request():
             results_store.clear_all()
 
         reservations = service.list_reservations(state.config, results_store)
@@ -231,7 +236,7 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
     def list_watches() -> str:
         if session.pop("keep_watch_results", False):
             logger.debug("Keeping fare watch results for the post-check page load")
-        else:
+        elif _is_browser_request():
             watch_results_store.clear_all()
 
         watches = service.list_watches(state.config, watch_results_store)
