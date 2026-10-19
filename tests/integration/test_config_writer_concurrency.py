@@ -42,6 +42,8 @@ def test_concurrent_reservation_creates_dont_lose_an_update(
         return real_read(path)
 
     mocker.patch.object(config_writer, "read_reservations", side_effect=slow_read)
+    # Creates now ask the daemon to reload; keep that from setting the process-wide reload flag
+    mocker.patch("lib.app_control.request_reload")
 
     app = create_app(config)
     app.config.update(TESTING=True)

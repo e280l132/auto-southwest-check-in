@@ -22,6 +22,7 @@ from flask import (
     url_for,
 )
 
+from .. import app_control
 from ..config import ConfigError, FareWatchConfig, GlobalConfig, ReservationConfig
 from ..fare_class_labels import fare_class_label
 from ..ignore_manager import IgnoreManager
@@ -162,8 +163,14 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             None,
         )
 
-    def _save(reservations: list[dict], success_message: str) -> Response:
-        """Persist reservations, reload the in-memory config, and report the outcome."""
+    def _save(
+        reservations: list[dict], success_message: str, *, reload_daemon: bool = True
+    ) -> Response:
+        """
+        Persist reservations, reload the in-memory config, and report the outcome. Unless
+        reload_daemon is False, also ask the check-in daemon to reload, so it picks up the change
+        without a manual "Reload config" click. Only pass False for fields the daemon never reads.
+        """
         try:
             config_writer.write_reservations(state.config_path, reservations)
             state.reload()
@@ -171,6 +178,9 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             logger.exception("Failed to save reservations")
             flash(f"Could not save configuration: {err}", "error")
             return redirect(url_for("index"))
+
+        if reload_daemon:
+            app_control.request_reload()
 
         flash(success_message, "success")
         return redirect(url_for("index"))
@@ -450,7 +460,12 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
             updated if r.get("confirmationNumber") == confirmation_number else r
             for r in config_writer.read_reservations(state.config_path)
         ]
-        return _save(reservations, f"Updated the paid fare for {confirmation_number}")
+        # originalFarePoints / originalTaxesFees are display-only, so the daemon needn't reload
+        return _save(
+            reservations,
+            f"Updated the paid fare for {confirmation_number}",
+            reload_daemon=False,
+        )
 
     @app.route("/api/reservations", methods=["POST"])
     @_with_config_lock
@@ -518,12 +533,6 @@ def create_app(config: GlobalConfig | None = None) -> Flask:
         IgnoreManager().cleanup_confirmations(
             {r.confirmation_number for r in state.config.reservations}
         )
-
-        # Without this, the check-in daemon keeps monitoring (and notifying about) the deleted
-        # reservation under its old process until a manual reload or restart happens
-        from .. import app_control  # noqa: PLC0415 (avoid import cost when webui unused)
-
-        app_control.request_reload()
 
         return response
 
